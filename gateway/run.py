@@ -107,17 +107,49 @@ def _gateway_surface_passes_raw_text(platform: Any) -> bool:
     return _gateway_platform_value(platform) in _GATEWAY_RAW_TEXT_PLATFORMS
 
 
-def _build_discord_delegated_task_start_message(goal: str, model: str) -> str:
+_DELEGATED_GOAL_MAX_LEN = 60  # match /background preview truncation
+_DELEGATED_MODEL_MAX_LEN = 35  # match CLI subagent.start spinner
+
+
+def _truncate_delegated_label(text: str, max_len: int) -> str:
+    text = (text or "").strip()
+    if len(text) > max_len:
+        return text[:max_len] + "..."
+    return text
+
+
+def _build_delegated_task_start_message(
+    goal: str,
+    model: str,
+    *,
+    task_index: int = 0,
+    task_count: int = 1,
+    lang: str | None = None,
+) -> str:
     """Format a one-shot delegated task start notification.
 
     Cache-safe + side-effect free: used by the gateway progress callback.
     """
-    _goal = (goal or "").strip()
-    _model = (model or "").strip()
-    lines = ["🚀 **Task delegated**"]
+    def _tr(key: str, **kwargs) -> str:
+        if lang:
+            return t(key, lang=lang, **kwargs)
+        return t(key, **kwargs)
+
+    _goal = _truncate_delegated_label(goal, _DELEGATED_GOAL_MAX_LEN)
+    _model = _truncate_delegated_label(model, _DELEGATED_MODEL_MAX_LEN)
+
+    if int(task_count) > 1:
+        header = _tr(
+            "gateway.delegated.start_header_indexed",
+            index=int(task_index) + 1,
+        )
+    else:
+        header = _tr("gateway.delegated.start_header")
+
+    lines = [header]
     if _model:
-        lines.append(f"• Model: `{_model}`")
-    lines.append(f"• Goal: {_goal}")
+        lines.append(_tr("gateway.delegated.label_model", model=_model))
+    lines.append(_tr("gateway.delegated.label_goal", goal=_goal))
     return "\n".join(lines)
 
 
@@ -17076,7 +17108,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 try:
                     _goal = str(preview or kwargs.get("goal") or "").strip()
                     _model = str(kwargs.get("model") or "").strip()
-                    msg = _build_discord_delegated_task_start_message(_goal, _model)
+                    _task_index = int(kwargs.get("task_index") or 0)
+                    _task_count = int(kwargs.get("task_count") or 1)
+                    msg = _build_delegated_task_start_message(
+                        _goal,
+                        _model,
+                        task_index=_task_index,
+                        task_count=_task_count,
+                    )
                     # Use a marker so send_progress_messages can deliver this
                     # bubble even on non-edit-capable adapters (iMessage/BlueBubbles).
                     progress_queue.put((_DELEGATED_TASK_START_MARKER, msg))

@@ -81,6 +81,12 @@ gateway:
     usage:                 "Usage: /background <prompt>\nExample: /background Summarize the top HN stories today\n\nRuns the prompt in a separate session. You can keep chatting — the result will appear here when done."
     started:               "🔄 Background task started: \"{preview}\"\nTask ID: {task_id}\nYou can keep chatting — results will appear when done."
 
+  delegated:
+    start_header:          "🚀 **Task delegated**"
+    start_header_indexed:  "🚀 **[{index}] Task delegated**"
+    label_model:           "• Model: `{model}`"
+    label_goal:            "• Goal: {goal}"
+
   branch:
     db_unavailable:        "Session database not available."
     no_conversation:       "No conversation to branch — send a message first."

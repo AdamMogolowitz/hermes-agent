@@ -66,6 +66,12 @@ gateway:
     usage:                 "Uso: /background <prompt>\nExemplo: /background Resume as principais histórias do HN de hoje\n\nExecuta o prompt numa sessão separada. Podes continuar a conversar — o resultado aparecerá aqui quando estiver concluído."
     started:               "🔄 Tarefa em segundo plano iniciada: \"{preview}\"\nID da tarefa: {task_id}\nPodes continuar a conversar — os resultados aparecerão aqui quando estiverem prontos."
 
+  delegated:
+    start_header:          "🚀 **Tarefa delegada**"
+    start_header_indexed:  "🚀 **[{index}] Tarefa delegada**"
+    label_model:           "• Modelo: `{model}`"
+    label_goal:            "• Objetivo: {goal}"
+
   branch:
     db_unavailable:        "Base de dados de sessões indisponível."
     no_conversation:       "Não há conversa para ramificar — envia uma mensagem primeiro."

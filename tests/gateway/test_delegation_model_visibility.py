@@ -223,15 +223,48 @@ async def test_discord_delegated_start_emitted_when_tool_progress_off(monkeypatc
     assert "pwd" not in blob
 
 
-def test_discord_message_formatter_helper(monkeypatch, tmp_path):
+def test_delegated_message_formatter_helper(monkeypatch, tmp_path):
     gateway_run = importlib.import_module("gateway.run")
-    msg = gateway_run._build_discord_delegated_task_start_message(
+    msg = gateway_run._build_delegated_task_start_message(
         "  my goal  ",
         " kimi-k2.6:cloud ",
     )
     assert "🚀 **Task delegated**" in msg
     assert "kimi-k2.6:cloud" in msg
     assert "• Goal: my goal" in msg
+
+
+def test_delegated_message_formatter_truncates_long_goal_and_model():
+    gateway_run = importlib.import_module("gateway.run")
+    long_goal = "g" * 100
+    long_model = "m" * 50
+    msg = gateway_run._build_delegated_task_start_message(long_goal, long_model)
+    assert "g" * 60 + "..." in msg
+    assert "m" * 35 + "..." in msg
+    assert long_goal not in msg
+    assert long_model not in msg
+
+
+def test_delegated_message_formatter_batch_prefix():
+    gateway_run = importlib.import_module("gateway.run")
+    msg = gateway_run._build_delegated_task_start_message(
+        "goal a",
+        "model-a",
+        task_index=1,
+        task_count=3,
+    )
+    assert "🚀 **[2] Task delegated**" in msg
+
+
+def test_delegated_message_formatter_i18n():
+    gateway_run = importlib.import_module("gateway.run")
+    msg = gateway_run._build_delegated_task_start_message(
+        "mein ziel",
+        "kimi-k2.6:cloud",
+        lang="de",
+    )
+    assert "Aufgabe delegiert" in msg
+    assert "Ziel: mein ziel" in msg
 
 
 class NonEditProgressCaptureAdapter(BasePlatformAdapter):

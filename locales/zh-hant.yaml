@@ -66,6 +66,12 @@ gateway:
     usage:                 "用法：/background <提示>\n範例：/background 摘要今天 HN 上的熱門故事\n\n在獨立工作階段中執行該提示。你可以繼續聊天 — 完成後結果將顯示於此。"
     started:               "🔄 背景任務已啟動：「{preview}」\n任務 ID：{task_id}\n你可以繼續聊天 — 完成後結果將顯示於此。"
 
+  delegated:
+    start_header:          "🚀 **任務已委派**"
+    start_header_indexed:  "🚀 **[{index}] 任務已委派**"
+    label_model:           "• 模型：`{model}`"
+    label_goal:            "• 目標：{goal}"
+
   branch:
     db_unavailable:        "工作階段資料庫無法使用。"
     no_conversation:       "沒有可分支的對話 — 請先傳送一則訊息。"

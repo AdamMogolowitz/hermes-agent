@@ -66,6 +66,12 @@ gateway:
     usage:                 "用法：/background <提示>\n示例：/background 总结今天 HN 上热门的故事\n\n在独立会话中运行该提示。你可以继续聊天 — 结果完成后将在此显示。"
     started:               "🔄 后台任务已启动：「{preview}」\n任务 ID：{task_id}\n你可以继续聊天 — 完成后结果将在此显示。"
 
+  delegated:
+    start_header:          "🚀 **任务已委派**"
+    start_header_indexed:  "🚀 **[{index}] 任务已委派**"
+    label_model:           "• 模型：`{model}`"
+    label_goal:            "• 目标：{goal}"
+
   branch:
     db_unavailable:        "会话数据库不可用。"
     no_conversation:       "没有可分支的对话 — 请先发送一条消息。"

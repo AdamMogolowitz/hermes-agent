@@ -66,6 +66,12 @@ gateway:
     usage:                 "Uso: /background <prompt>\nEsempio: /background Riassumi le principali notizie di HN di oggi\n\nEsegue il prompt in una sessione separata. Puoi continuare a chattare — il risultato apparirà qui al termine."
     started:               "🔄 Attività in background avviata: \"{preview}\"\nID attività: {task_id}\nPuoi continuare a chattare — i risultati appariranno al termine."
 
+  delegated:
+    start_header:          "🚀 **Attività delegata**"
+    start_header_indexed:  "🚀 **[{index}] Attività delegata**"
+    label_model:           "• Modello: `{model}`"
+    label_goal:            "• Obiettivo: {goal}"
+
   branch:
     db_unavailable:        "Database delle sessioni non disponibile."
     no_conversation:       "Nessuna conversazione da diramare — invia prima un messaggio."

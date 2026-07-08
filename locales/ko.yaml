@@ -66,6 +66,12 @@ gateway:
     usage:                 "사용법: /background <prompt>\n예시: /background 오늘 HN 인기 글을 요약해줘\n\n프롬프트를 별도 세션에서 실행합니다. 계속 대화할 수 있으며, 완료되면 결과가 여기에 표시됩니다."
     started:               "🔄 백그라운드 작업이 시작되었습니다: \"{preview}\"\n작업 ID: {task_id}\n계속 대화하실 수 있습니다 — 완료되면 결과가 여기에 표시됩니다."
 
+  delegated:
+    start_header:          "🚀 **작업 위임됨**"
+    start_header_indexed:  "🚀 **[{index}] 작업 위임됨**"
+    label_model:           "• 모델: `{model}`"
+    label_goal:            "• 목표: {goal}"
+
   branch:
     db_unavailable:        "세션 데이터베이스를 사용할 수 없습니다."
     no_conversation:       "분기할 대화가 없습니다 — 먼저 메시지를 보내주세요."

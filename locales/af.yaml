@@ -66,6 +66,12 @@ gateway:
     usage:                 "Gebruik: /background <prompt>\nVoorbeeld: /background Som vandag se top HN-stories op\n\nVoer die prompt in 'n aparte sessie uit. Jy kan aanhou gesels — die resultaat verskyn hier wanneer dit klaar is."
     started:               "🔄 Agtergrondtaak begin: \"{preview}\"\nTaak-ID: {task_id}\nJy kan aanhou gesels — resultate verskyn hier wanneer dit klaar is."
 
+  delegated:
+    start_header:          "🚀 **Taak gedelegeer**"
+    start_header_indexed:  "🚀 **[{index}] Taak gedelegeer**"
+    label_model:           "• Model: `{model}`"
+    label_goal:            "• Doel: {goal}"
+
   branch:
     db_unavailable:        "Sessie-databasis is nie beskikbaar nie."
     no_conversation:       "Geen gesprek om te vertak nie — stuur eers 'n boodskap."

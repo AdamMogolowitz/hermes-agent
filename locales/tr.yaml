@@ -66,6 +66,12 @@ gateway:
     usage:                 "Kullanım: /background <prompt>\nÖrnek: /background Bugünün öne çıkan HN haberlerini özetle\n\nİstemi ayrı bir oturumda çalıştırır. Sohbete devam edebilirsin — sonuç tamamlandığında burada görünecek."
     started:               "🔄 Arka plan görevi başlatıldı: \"{preview}\"\nGörev kimliği: {task_id}\nSohbete devam edebilirsin — sonuçlar tamamlandığında burada görünecek."
 
+  delegated:
+    start_header:          "🚀 **Görev devredildi**"
+    start_header_indexed:  "🚀 **[{index}] Görev devredildi**"
+    label_model:           "• Model: `{model}`"
+    label_goal:            "• Hedef: {goal}"
+
   branch:
     db_unavailable:        "Oturum veritabanı kullanılamıyor."
     no_conversation:       "Dallandırılacak konuşma yok — önce bir mesaj gönderin."

@@ -70,6 +70,12 @@ gateway:
     usage:                 "Úsáid: /background <leid>\nSampla: /background Déan achoimre ar phríomhscéalta HN inniu\n\nRitheann an leid i seisiún ar leith. Is féidir leat leanúint leis an gcomhrá — taispeánfar an toradh anseo nuair a bheidh sé críochnaithe."
     started:               "🔄 Tasc cúlra tosaithe: \"{preview}\"\nAitheantas an tasc: {task_id}\nIs féidir leat leanúint leis an gcomhrá — taispeánfar na torthaí nuair a bheidh sé críochnaithe."
 
+  delegated:
+    start_header:          "🚀 **Tasc delegáilte**"
+    start_header_indexed:  "🚀 **[{index}] Tasc delegáilte**"
+    label_model:           "• Samhail: `{model}`"
+    label_goal:            "• Sprioc: {goal}"
+
   branch:
     db_unavailable:        "Níl bunachar sonraí na seisiún ar fáil."
     no_conversation:       "Níl aon chomhrá le brainseáil — seol teachtaireacht ar dtús."

@@ -66,6 +66,12 @@ gateway:
     usage:                 "Használat: /background <prompt>\nPélda: /background Foglald össze a mai legjobb HN sztorikat\n\nKülön munkamenetben futtatja a promptot. Folytathatod a beszélgetést — az eredmény itt jelenik meg, amint elkészül."
     started:               "🔄 Háttérfeladat elindítva: \"{preview}\"\nFeladatazonosító: {task_id}\nFolytathatod a beszélgetést — az eredmények itt jelennek meg, amint elkészülnek."
 
+  delegated:
+    start_header:          "🚀 **Feladat delegálva**"
+    start_header_indexed:  "🚀 **[{index}] Feladat delegálva**"
+    label_model:           "• Modell: `{model}`"
+    label_goal:            "• Cél: {goal}"
+
   branch:
     db_unavailable:        "A munkamenet-adatbázis nem érhető el."
     no_conversation:       "Nincs elágaztatható beszélgetés — küldj előbb egy üzenetet."
