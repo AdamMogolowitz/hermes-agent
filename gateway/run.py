@@ -114,11 +114,14 @@ def _build_discord_delegated_task_start_message(goal: str, model: str) -> str:
     """
     _goal = (goal or "").strip()
     _model = (model or "").strip()
-    return (
-        "🚀 **Task delegated**\n"
-        f"• Model: `{_model}`\n"
-        f"• Goal: {_goal}"
-    )
+    lines = ["🚀 **Task delegated**"]
+    if _model:
+        lines.append(f"• Model: `{_model}`")
+    lines.append(f"• Goal: {_goal}")
+    return "\n".join(lines)
+
+
+_DELEGATED_TASK_START_MARKER = "__delegate_start__"
 
 
 _GATEWAY_PROVIDER_ERROR_RE = re.compile(
@@ -16922,13 +16925,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             require_platform_override_for={Platform.MATTERMOST},
         )
         _thinking_enabled = _thinking_mode != "off"
-        # Always create the progress callback queue for Discord so we can
-        # surface delegated-subagent start notifications even when
-        # display.tool_progress is off.
+        def _should_emit_delegated_task_start(p: Platform) -> bool:
+            # Webhooks/api-server/local are non-chat/programmatic surfaces.
+            return p not in {Platform.WEBHOOK, Platform.MSGRAPH_WEBHOOK, Platform.API_SERVER, Platform.LOCAL}
+
+        # Create the progress callback queue not only when tool/typing
+        # progress is on, but also when we need to surface delegated
+        # subagent start notifications.
         needs_progress_queue = (
             tool_progress_enabled
             or _thinking_enabled
-            or source.platform == Platform.DISCORD
+            or _should_emit_delegated_task_start(source.platform)
         )
 
 
@@ -17063,16 +17070,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     progress_queue.put(msg)
                 return
 
-            # Delegated task start: surface which effective model was selected
-            # for the child subagent (start-phase only, not completion).
-            if event_type == "subagent.start" and source.platform == Platform.DISCORD:
+            # Delegated task start: surface which effective model was
+            # selected for the child subagent (start-phase only, not completion).
+            if event_type == "subagent.start" and _should_emit_delegated_task_start(source.platform):
                 try:
                     _goal = str(preview or kwargs.get("goal") or "").strip()
                     _model = str(kwargs.get("model") or "").strip()
-                    # Keep this message short: it will be sent as a single
-                    # non-editable bubble when tool_progress is off.
                     msg = _build_discord_delegated_task_start_message(_goal, _model)
-                    progress_queue.put(msg)
+                    # Use a marker so send_progress_messages can deliver this
+                    # bubble even on non-edit-capable adapters (iMessage/BlueBubbles).
+                    progress_queue.put((_DELEGATED_TASK_START_MARKER, msg))
                 except Exception as _subagent_start_err:
                     logger.debug("subagent.start relay failed: %s", _subagent_start_err)
                 return
@@ -17325,12 +17332,58 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # editing (e.g. iMessage/BlueBubbles) — each progress update
             # would become a separate message bubble, which is noisy.
             if type(adapter).edit_message is BasePlatformAdapter.edit_message:
-                while not progress_queue.empty():
+                # For these non-edit platforms we still deliver the
+                # delegated-subagent start marker (one bubble per subagent),
+                # but we suppress all other progress lines.
+                #
+                # IMPORTANT: don't drain-and-return immediately — the agent
+                # may enqueue the delegated-start marker *after* this sender
+                # task starts (race on background startup). Instead, keep
+                # waiting until the run is no longer current.
+                while True:
+                    if not _run_still_current():
+                        # Final drain on shutdown.
+                        while not progress_queue.empty():
+                            try:
+                                raw = progress_queue.get_nowait()
+                            except Exception:
+                                break
+                            if (
+                                isinstance(raw, tuple)
+                                and len(raw) == 2
+                                and raw[0]
+                                == _DELEGATED_TASK_START_MARKER
+                            ):
+                                await adapter.send(
+                                    chat_id=source.chat_id,
+                                    content=str(raw[1]),
+                                    reply_to=_progress_reply_to,
+                                    metadata=_progress_metadata,
+                                )
+                        return
+
                     try:
-                        progress_queue.get_nowait()
+                        raw = progress_queue.get_nowait()
+                    except queue.Empty:
+                        await asyncio.sleep(0.05)
+                        continue
                     except Exception:
-                        break
-                return
+                        await asyncio.sleep(0.05)
+                        continue
+
+                    if (
+                        isinstance(raw, tuple)
+                        and len(raw) == 2
+                        and raw[0] == _DELEGATED_TASK_START_MARKER
+                    ):
+                        await adapter.send(
+                            chat_id=source.chat_id,
+                            content=str(raw[1]),
+                            reply_to=_progress_reply_to,
+                            metadata=_progress_metadata,
+                        )
+                    # Ignore every other progress line.
+                # unreachable
 
             progress_lines = []      # Accumulated tool lines for the CURRENT editable bubble
             progress_msg_id = None   # ID of the current progress message to edit
@@ -17503,7 +17556,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         repeat_count[0] = 0
                         continue
                     else:
-                        msg = raw
+                        if (
+                            isinstance(raw, tuple)
+                            and len(raw) == 2
+                            and raw[0] == _DELEGATED_TASK_START_MARKER
+                        ):
+                            msg = str(raw[1])
+                        else:
+                            msg = raw
                         progress_lines.append(msg)
 
                     if await _roll_progress_overflow_if_needed():

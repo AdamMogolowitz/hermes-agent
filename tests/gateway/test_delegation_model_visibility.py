@@ -146,6 +146,44 @@ def _setup_gateway(monkeypatch, tmp_path, *, platform: Platform, agent_cls, conf
     return runner, adapter, source, session_key
 
 
+def _setup_gateway_with_adapter(
+    monkeypatch,
+    tmp_path,
+    *,
+    platform: Platform,
+    adapter: BasePlatformAdapter,
+    agent_cls,
+    config_data,
+):
+    import yaml
+
+    if config_data:
+        (tmp_path / "config.yaml").write_text(yaml.dump(config_data), encoding="utf-8")
+
+    fake_dotenv = types.ModuleType("dotenv")
+    fake_dotenv.load_dotenv = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_run_agent.AIAgent = agent_cls
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+    runner = _make_runner(adapter)
+
+    gateway_run = importlib.import_module("gateway.run")
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
+
+    source = SessionSource(
+        platform=platform,
+        chat_id="-1001",
+        chat_type="group",
+        thread_id="thread-1",
+    )
+    session_key = f"agent:main:{platform.value}:{source.chat_type}:{source.chat_id}:{source.thread_id}"
+    return runner, adapter, source, session_key
+
+
 @pytest.mark.asyncio
 async def test_discord_delegated_start_emitted_when_tool_progress_off(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
@@ -194,4 +232,80 @@ def test_discord_message_formatter_helper(monkeypatch, tmp_path):
     assert "🚀 **Task delegated**" in msg
     assert "kimi-k2.6:cloud" in msg
     assert "• Goal: my goal" in msg
+
+
+class NonEditProgressCaptureAdapter(BasePlatformAdapter):
+    """Adapter that does NOT override edit_message.
+
+    Mirrors platforms like iMessage/BlueBubbles where tool progress updates
+    are intentionally not edited.
+    """
+
+    def __init__(self, platform=Platform.BLUEBUBBLES):
+        super().__init__(PlatformConfig(enabled=True, token="***"), platform)
+        self.sent: list[dict] = []
+
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
+        return True
+
+    async def disconnect(self) -> None:
+        return None
+
+    async def send(self, chat_id, content, reply_to=None, metadata=None) -> SendResult:
+        self.sent.append(
+            {
+                "chat_id": chat_id,
+                "content": content,
+                "reply_to": reply_to,
+                "metadata": metadata,
+            }
+        )
+        return SendResult(success=True, message_id="progress-1")
+
+    async def get_chat_info(self, chat_id: str):
+        return {"id": chat_id}
+
+
+@pytest.mark.asyncio
+async def test_delegated_start_sent_on_non_edit_adapter_when_tool_progress_off(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
+
+    adapter = NonEditProgressCaptureAdapter(platform=Platform.BLUEBUBBLES)
+
+    runner, adapter, source, session_key = _setup_gateway_with_adapter(
+        monkeypatch,
+        tmp_path,
+        platform=Platform.BLUEBUBBLES,
+        adapter=adapter,
+        agent_cls=DelegationStartAgent,
+        config_data={"display": {"tool_progress": "off", "thinking_progress": False}},
+    )
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="sess-delegation-start",
+        session_key=session_key,
+    )
+
+    assert result.get("final_response") == "done"
+
+    delegated_contents = {
+        str(c.get("content", ""))
+        for c in adapter.sent
+        if "Task delegated" in str(c.get("content", ""))
+    }
+    assert len(delegated_contents) == 1
+
+    content = next(iter(delegated_contents))
+    assert "Generate marketing copy" in content
+    assert "kimi-k2.6:cloud" in content
+
+    blob = "\n".join([str(c["content"]) for c in adapter.sent])
+    assert "pwd" not in blob
 
