@@ -890,7 +890,7 @@ def _build_child_progress_callback(
                 short = (
                     (goal_label[:55] + "...") if len(goal_label) > 55 else goal_label
                 )
-                model_label = (model or "").strip() if isinstance(model, str) else ""
+                model_label = str(kwargs.get("model") or model or "").strip()
                 try:
                     if model_label:
                         # Keep the model label compact to prevent runaway
@@ -1048,6 +1048,22 @@ def _inherit_parent_base_url(parent_agent, fallback_base_url: Optional[str]) -> 
             return live_url
 
     return fallback_base_url or None
+
+
+def _subagent_start_model_label(child, *, parent_agent=None) -> str:
+    """Post-init display label for the model the child will call at spawn.
+
+    Reflects AIAgent init + normalize_model_for_provider only — not runtime
+    fallback after the first API call.
+    """
+    model = (getattr(child, "model", None) or "").strip()
+    if model:
+        return model
+    if parent_agent is not None:
+        parent_model = (getattr(parent_agent, "model", None) or "").strip()
+        if parent_model:
+            return parent_model
+    return ""
 
 
 def _build_child_agent(
@@ -1876,10 +1892,12 @@ def _run_single_child(
         _heartbeat_thread.start()
         if child_progress_cb:
             try:
-                _start_model = getattr(child, "model", None)
+                _start_model = _subagent_start_model_label(
+                    child, parent_agent=parent_agent
+                )
                 _start_kwargs: Dict[str, Any] = {}
-                if isinstance(_start_model, str) and _start_model.strip():
-                    _start_kwargs["model"] = _start_model.strip()
+                if _start_model:
+                    _start_kwargs["model"] = _start_model
                 child_progress_cb("subagent.start", preview=goal, **_start_kwargs)
             except Exception as e:
                 logger.debug("Progress callback start failed: %s", e)

@@ -1838,6 +1838,10 @@ DEFAULT_CONFIG = {
             "last_lines": 2,
         },
         "interim_assistant_messages": True,  # Gateway: show natural mid-turn assistant status messages
+        # Gateway: one-shot bubble when a subagent starts (model + goal). Independent
+        # from display.tool_progress — users can keep tool breadcrumbs off while
+        # still seeing which model a delegation picked, or disable both.
+        "delegated_start_notifications": True,
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway
         "tool_progress_overrides": {},  # DEPRECATED — use display.platforms instead
         "tool_preview_length": 0,  # Max chars for tool call previews (0 = no limit, show full paths/commands)

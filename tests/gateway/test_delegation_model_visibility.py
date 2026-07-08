@@ -197,7 +197,13 @@ async def test_discord_delegated_start_emitted_when_tool_progress_off(monkeypatc
         tmp_path,
         platform=Platform.DISCORD,
         agent_cls=DelegationStartAgent,
-        config_data={"display": {"tool_progress": "off", "thinking_progress": False}},
+        config_data={
+            "display": {
+                "tool_progress": "off",
+                "thinking_progress": False,
+                "delegated_start_notifications": True,
+            }
+        },
     )
 
     result = await runner._run_agent(
@@ -211,19 +217,63 @@ async def test_discord_delegated_start_emitted_when_tool_progress_off(monkeypatc
 
     assert result.get("final_response") == "done"
 
-    delegated_contents = {
+    delegated_sent = [
         str(c.get("content", ""))
-        for c in (adapter.sent + adapter.edits)
+        for c in adapter.sent
         if "Task delegated" in str(c.get("content", ""))
-    }
-    assert len(delegated_contents) == 1
+    ]
+    assert len(delegated_sent) == 1
 
-    content = next(iter(delegated_contents))
+    content = delegated_sent[0]
     assert "Generate marketing copy" in content
     assert "kimi-k2.6:cloud" in content
 
+    # Standalone bubble — not merged into tool-progress edits.
+    delegated_edits = [
+        str(c.get("content", ""))
+        for c in adapter.edits
+        if "Task delegated" in str(c.get("content", ""))
+    ]
+    assert delegated_edits == []
+
     # Tool progress must be suppressed with display.tool_progress=off.
     blob = "\n".join([str(c["content"]) for c in (adapter.sent + adapter.edits)])
+    assert "pwd" not in blob
+
+
+@pytest.mark.asyncio
+async def test_delegated_start_suppressed_when_notifications_disabled(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
+
+    runner, adapter, source, session_key = _setup_gateway(
+        monkeypatch,
+        tmp_path,
+        platform=Platform.DISCORD,
+        agent_cls=DelegationStartAgent,
+        config_data={
+            "display": {
+                "tool_progress": "off",
+                "thinking_progress": False,
+                "delegated_start_notifications": False,
+            }
+        },
+    )
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="sess-delegation-start",
+        session_key=session_key,
+    )
+
+    assert result.get("final_response") == "done"
+
+    blob = "\n".join([str(c["content"]) for c in (adapter.sent + adapter.edits)])
+    assert "Task delegated" not in blob
     assert "pwd" not in blob
 
 
@@ -325,7 +375,13 @@ async def test_delegated_start_sent_on_non_edit_adapter_when_tool_progress_off(
         platform=Platform.BLUEBUBBLES,
         adapter=adapter,
         agent_cls=DelegationStartAgent,
-        config_data={"display": {"tool_progress": "off", "thinking_progress": False}},
+        config_data={
+            "display": {
+                "tool_progress": "off",
+                "thinking_progress": False,
+                "delegated_start_notifications": True,
+            }
+        },
     )
 
     result = await runner._run_agent(
@@ -339,14 +395,14 @@ async def test_delegated_start_sent_on_non_edit_adapter_when_tool_progress_off(
 
     assert result.get("final_response") == "done"
 
-    delegated_contents = {
+    delegated_sent = [
         str(c.get("content", ""))
         for c in adapter.sent
         if "Task delegated" in str(c.get("content", ""))
-    }
-    assert len(delegated_contents) == 1
+    ]
+    assert len(delegated_sent) == 1
 
-    content = next(iter(delegated_contents))
+    content = delegated_sent[0]
     assert "Generate marketing copy" in content
     assert "kimi-k2.6:cloud" in content
 
@@ -400,7 +456,13 @@ async def test_delegated_start_durable_after_turn_ends(monkeypatch, tmp_path):
         tmp_path,
         platform=Platform.DISCORD,
         agent_cls=BackgroundDelegationStartAgent,
-        config_data={"display": {"tool_progress": "off", "thinking_progress": False}},
+        config_data={
+            "display": {
+                "tool_progress": "off",
+                "thinking_progress": False,
+                "delegated_start_notifications": True,
+            }
+        },
     )
     runner._gateway_loop = asyncio.get_running_loop()
 

@@ -14,7 +14,10 @@ import pytest
 from unittest.mock import MagicMock
 
 from agent.display import KawaiiSpinner
-from tools.delegate_tool import _build_child_progress_callback
+from tools.delegate_tool import (
+    _build_child_progress_callback,
+    _subagent_start_model_label,
+)
 
 
 # =========================================================================
@@ -141,6 +144,45 @@ class TestBuildChildProgressCallback:
         assert "├─ 🔀" in output
         assert "test goal" in output
         assert "[model: kimi-k2.6:cloud]" in output
+
+    def test_cli_spinner_subagent_start_prefers_kwargs_model(self):
+        """kwargs model from _run_single_child overrides closure model."""
+        buf = io.StringIO()
+        spinner = KawaiiSpinner("delegating")
+        spinner._out = buf
+        spinner.running = True
+
+        parent = MagicMock()
+        parent._delegate_spinner = spinner
+        parent.tool_progress_callback = None
+
+        cb = _build_child_progress_callback(
+            0,
+            "test goal",
+            parent,
+            model="stale/unresolved-model",
+        )
+        cb(
+            "subagent.start",
+            preview="test goal",
+            model="anthropic/claude-sonnet-4",
+        )
+
+        output = buf.getvalue()
+        assert "[model: anthropic/claude-sonnet-4]" in output
+        assert "stale/unresolved-model" not in output
+
+    def test_subagent_start_model_label_uses_post_init_child_model(self):
+        child = MagicMock()
+        child.model = "  kimi-k2.6:cloud  "
+        assert _subagent_start_model_label(child) == "kimi-k2.6:cloud"
+
+    def test_subagent_start_model_label_falls_back_to_parent(self):
+        child = MagicMock()
+        child.model = ""
+        parent = MagicMock()
+        parent.model = "parent/model"
+        assert _subagent_start_model_label(child, parent_agent=parent) == "parent/model"
 
     def test_cli_spinner_subagent_start_omits_model_when_none(self):
         """subagent.start should omit the model label when model is unset."""

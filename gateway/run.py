@@ -171,6 +171,19 @@ def _should_emit_delegated_task_start(platform: Any) -> bool:
     }
 
 
+def _delegated_start_enabled(user_config: dict, platform_key: str) -> bool:
+    """True when delegated-subagent start notifications are enabled."""
+    from gateway.display_config import resolve_display_setting
+
+    value = resolve_display_setting(
+        user_config,
+        platform_key,
+        "delegated_start_notifications",
+        fallback=True,
+    )
+    return is_truthy_value(value, default=True)
+
+
 def schedule_delegated_start_notice(
     *,
     source: "SessionSource",
@@ -16882,6 +16895,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         This is run in a thread pool to not block the event loop.
         Supports interruption via new messages.
         """
+        try:
+            _active_loop = asyncio.get_running_loop()
+            _loop_ref = getattr(self, "_gateway_loop", None)
+            if _loop_ref is None or _loop_ref.is_closed():
+                self._gateway_loop = _active_loop
+        except RuntimeError:
+            pass
+
         # ---- Proxy mode: delegate to remote API server ----
         if self._get_proxy_url():
             return await self._run_agent_via_proxy(
@@ -17033,13 +17054,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         )
         _thinking_enabled = _thinking_mode != "off"
 
-        # Create the progress callback queue not only when tool/typing
-        # progress is on, but also when we need to surface delegated
-        # subagent start notifications.
+        _delegated_start_on = (
+            _delegated_start_enabled(user_config, platform_key)
+            and _should_emit_delegated_task_start(source.platform)
+        )
+
+        # Create the progress callback queue when tool/typing progress or
+        # thinking relay needs it. Delegated-start notifications use
+        # schedule_delegated_start_notice directly (not this queue).
         needs_progress_queue = (
             tool_progress_enabled
             or _thinking_enabled
-            or _should_emit_delegated_task_start(source.platform)
         )
 
 
@@ -17138,6 +17163,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             if event_type == "subagent.start" and _should_emit_delegated_task_start(
                 source.platform
             ):
+                if not _delegated_start_enabled(user_config, platform_key):
+                    return
                 try:
                     _goal = str(preview or kwargs.get("goal") or "").strip()
                     _model = str(kwargs.get("model") or "").strip()
@@ -17149,20 +17176,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         task_index=_task_index,
                         task_count=_task_count,
                     )
-                    if (
-                        progress_queue
-                        and _run_still_current()
-                        and _progress_sender_alive[0]
-                    ):
-                        # Use a marker so send_progress_messages can deliver this
-                        # bubble even on non-edit-capable adapters (iMessage/BlueBubbles).
-                        progress_queue.put((_DELEGATED_TASK_START_MARKER, msg))
-                    else:
-                        schedule_delegated_start_notice(
-                            source=source,
-                            message=msg,
-                            reply_to=event_message_id,
-                        )
+                    schedule_delegated_start_notice(
+                        source=source,
+                        message=msg,
+                        reply_to=event_message_id,
+                    )
                 except Exception as _subagent_start_err:
                     logger.debug("subagent.start relay failed: %s", _subagent_start_err)
                 return
@@ -17460,59 +17478,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # Skip tool progress for platforms that don't support message
             # editing (e.g. iMessage/BlueBubbles) — each progress update
             # would become a separate message bubble, which is noisy.
+            # Delegated-start bubbles are delivered via
+            # schedule_delegated_start_notice, not this sender.
             if type(adapter).edit_message is BasePlatformAdapter.edit_message:
-                # For these non-edit platforms we still deliver the
-                # delegated-subagent start marker (one bubble per subagent),
-                # but we suppress all other progress lines.
-                #
-                # IMPORTANT: don't drain-and-return immediately — the agent
-                # may enqueue the delegated-start marker *after* this sender
-                # task starts (race on background startup). Instead, keep
-                # waiting until the run is no longer current.
-                while True:
-                    if not _run_still_current():
-                        # Final drain on shutdown.
-                        while not progress_queue.empty():
-                            try:
-                                raw = progress_queue.get_nowait()
-                            except Exception:
-                                break
-                            if (
-                                isinstance(raw, tuple)
-                                and len(raw) == 2
-                                and raw[0]
-                                == _DELEGATED_TASK_START_MARKER
-                            ):
-                                await adapter.send(
-                                    chat_id=source.chat_id,
-                                    content=str(raw[1]),
-                                    reply_to=_progress_reply_to,
-                                    metadata=_progress_metadata,
-                                )
-                        return
-
-                    try:
-                        raw = progress_queue.get_nowait()
-                    except queue.Empty:
-                        await asyncio.sleep(0.05)
-                        continue
-                    except Exception:
-                        await asyncio.sleep(0.05)
-                        continue
-
-                    if (
-                        isinstance(raw, tuple)
-                        and len(raw) == 2
-                        and raw[0] == _DELEGATED_TASK_START_MARKER
-                    ):
-                        await adapter.send(
-                            chat_id=source.chat_id,
-                            content=str(raw[1]),
-                            reply_to=_progress_reply_to,
-                            metadata=_progress_metadata,
-                        )
-                    # Ignore every other progress line.
-                # unreachable
+                return
 
             progress_lines = []      # Accumulated tool lines for the CURRENT editable bubble
             progress_msg_id = None   # ID of the current progress message to edit
@@ -17685,14 +17654,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         repeat_count[0] = 0
                         continue
                     else:
-                        if (
-                            isinstance(raw, tuple)
-                            and len(raw) == 2
-                            and raw[0] == _DELEGATED_TASK_START_MARKER
-                        ):
-                            msg = str(raw[1])
-                        else:
-                            msg = raw
+                        msg = raw
                         progress_lines.append(msg)
 
                     if await _roll_progress_overflow_if_needed():
@@ -17814,8 +17776,27 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                                 progress_lines = []
                                 last_progress_msg[0] = None
                                 repeat_count[0] = 0
+                            elif (
+                                isinstance(raw, tuple)
+                                and len(raw) == 2
+                                and raw[0] == _DELEGATED_TASK_START_MARKER
+                            ):
+                                # Stray delegated-start marker — deliver
+                                # standalone; must not land in progress_lines.
+                                try:
+                                    await adapter.send(
+                                        chat_id=source.chat_id,
+                                        content=str(raw[1]),
+                                        reply_to=_progress_reply_to,
+                                        metadata=_progress_metadata,
+                                    )
+                                except Exception:
+                                    pass
                             else:
-                                progress_lines.append(raw)
+                                if isinstance(raw, tuple) and len(raw) == 2:
+                                    progress_lines.append(str(raw[1]))
+                                else:
+                                    progress_lines.append(raw)
                                 await _roll_progress_overflow_if_needed()
                         except Exception:
                             break
@@ -18298,7 +18279,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # None callback — so _thinking scratch bubbles never relayed even
             # though the progress queue was created for them.
             agent.tool_progress_callback = (
-                progress_callback if (needs_progress_queue or log_mode_enabled) else None
+                progress_callback
+                if (needs_progress_queue or log_mode_enabled or _delegated_start_on)
+                else None
             )
             # Discord voice verbal-ack hook (fires once per turn on first tool
             # call; armed only when in a voice channel with the mixer running).

@@ -154,7 +154,9 @@ export function delegateTaskPayloads(
 
   return tasks.map((task, index) => {
     const goal = firstString(task.goal, args.goal, payload.context) || 'Delegated task'
-    const model = firstString(task.model, args.model, payload.model)
+    // Authoritative model comes from backend subagent.start events; do not
+    // guess from tool-call args when synthesizing a start event client-side.
+    const model = firstString(payload.model)
     const summary = firstString(result.summary, payload.summary, payload.message)
 
     return {

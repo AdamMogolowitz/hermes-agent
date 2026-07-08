@@ -45,6 +45,7 @@ _GLOBAL_DEFAULTS: dict[str, Any] = {
     # Gateway-only assistant/status chatter controls. These default on for
     # back-compat, but mobile platforms can opt down to final-answer-first.
     "interim_assistant_messages": True,
+    "delegated_start_notifications": True,
     "long_running_notifications": True,
     "busy_ack_detail": True,
     # Whether busy_input_mode=steer sends a visible "Steered into current run"
