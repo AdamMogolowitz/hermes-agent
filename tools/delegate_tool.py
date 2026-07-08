@@ -39,6 +39,11 @@ _RUNTIME_PROVIDER_CUSTOM = "custom"
 from tools import file_state
 from tools.terminal_tool import set_approval_callback as _set_subagent_approval_cb
 from utils import base_url_hostname, is_truthy_value
+from agent.delegation_display import (
+    DELEGATED_GOAL_PREVIEW_MAX,
+    DELEGATED_MODEL_PREVIEW_MAX,
+    truncate_delegated_label,
+)
 
 
 # Tools that children must never have access to
@@ -887,16 +892,14 @@ def _build_child_progress_callback(
         # before enum normalisation since they are not part of DelegateEvent.
         if event_type == "subagent.start":
             if spinner and goal_label:
-                short = (
-                    (goal_label[:55] + "...") if len(goal_label) > 55 else goal_label
-                )
+                short = truncate_delegated_label(goal_label, DELEGATED_GOAL_PREVIEW_MAX)
                 model_label = str(kwargs.get("model") or model or "").strip()
                 try:
                     if model_label:
                         # Keep the model label compact to prevent runaway
                         # console lines on very long provider/model strings.
-                        model_short = (
-                            (model_label[:35] + "...") if len(model_label) > 35 else model_label
+                        model_short = truncate_delegated_label(
+                            model_label, DELEGATED_MODEL_PREVIEW_MAX
                         )
                         spinner.print_above(f" {prefix}├─ 🔀 {short} [model: {model_short}]")
                     else:

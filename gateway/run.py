@@ -97,119 +97,15 @@ _TELEGRAM_NOISY_STATUS_RE = re.compile(
 # where operational lifecycle/provider-error noise (and any secrets in it)
 # must be suppressed or sanitized. Widens #28533's Telegram-only filter to
 # all chat gateways (#39293). Fail-closed: unknown/empty platform -> chat.
-_GATEWAY_RAW_TEXT_PLATFORMS = frozenset(
-    {"local", "api_server", "webhook", "msgraph_webhook"}
+from gateway.delegated_notifications import (
+    GATEWAY_RAW_TEXT_PLATFORMS as _GATEWAY_RAW_TEXT_PLATFORMS,
+    build_delegated_task_start_message as _build_delegated_task_start_message,
+    delegated_start_enabled as _delegated_start_enabled,
+    deliver_delegated_start_notice,
+    gateway_surface_passes_raw_text as _gateway_surface_passes_raw_text,
+    schedule_delegated_start_notice,
+    should_emit_delegated_task_start as _should_emit_delegated_task_start,
 )
-
-
-def _gateway_surface_passes_raw_text(platform: Any) -> bool:
-    """True only for programmatic/local surfaces that must keep raw text."""
-    return _gateway_platform_value(platform) in _GATEWAY_RAW_TEXT_PLATFORMS
-
-
-_DELEGATED_GOAL_MAX_LEN = 60  # match /background preview truncation
-_DELEGATED_MODEL_MAX_LEN = 35  # match CLI subagent.start spinner
-
-
-def _truncate_delegated_label(text: str, max_len: int) -> str:
-    text = (text or "").strip()
-    if len(text) > max_len:
-        return text[:max_len] + "..."
-    return text
-
-
-def _build_delegated_task_start_message(
-    goal: str,
-    model: str,
-    *,
-    task_index: int = 0,
-    task_count: int = 1,
-    lang: str | None = None,
-) -> str:
-    """Format a one-shot delegated task start notification.
-
-    Cache-safe + side-effect free: used by the gateway progress callback.
-    """
-    def _tr(key: str, **kwargs) -> str:
-        if lang:
-            return t(key, lang=lang, **kwargs)
-        return t(key, **kwargs)
-
-    _goal = _truncate_delegated_label(goal, _DELEGATED_GOAL_MAX_LEN)
-    _model = _truncate_delegated_label(model, _DELEGATED_MODEL_MAX_LEN)
-
-    if int(task_count) > 1:
-        header = _tr(
-            "gateway.delegated.start_header_indexed",
-            index=int(task_index) + 1,
-        )
-    else:
-        header = _tr("gateway.delegated.start_header")
-
-    lines = [header]
-    if _model:
-        lines.append(_tr("gateway.delegated.label_model", model=_model))
-    if _goal:
-        lines.append(_tr("gateway.delegated.label_goal", goal=_goal))
-    return "\n".join(lines)
-
-
-_DELEGATED_TASK_START_MARKER = "__delegate_start__"
-
-
-def _should_emit_delegated_task_start(platform: Any) -> bool:
-    """True for chat platforms that should receive delegated-start bubbles."""
-    try:
-        p = platform if isinstance(platform, Platform) else Platform(str(platform))
-    except Exception:
-        return False
-    return p not in {
-        Platform.WEBHOOK,
-        Platform.MSGRAPH_WEBHOOK,
-        Platform.API_SERVER,
-        Platform.LOCAL,
-    }
-
-
-def _delegated_start_enabled(user_config: dict, platform_key: str) -> bool:
-    """True when delegated-subagent start notifications are enabled."""
-    from gateway.display_config import resolve_display_setting
-
-    value = resolve_display_setting(
-        user_config,
-        platform_key,
-        "delegated_start_notifications",
-        fallback=True,
-    )
-    return is_truthy_value(value, default=True)
-
-
-def schedule_delegated_start_notice(
-    *,
-    source: "SessionSource",
-    message: str,
-    reply_to: str | None = None,
-) -> None:
-    """Schedule a one-shot delegated-start bubble on the gateway loop.
-
-    Used when ``subagent.start`` fires after the parent turn ends (e.g.
-    ``delegate_task(background=true)``) and the per-turn progress sender
-    task has already been cancelled.
-    """
-    runner = _gateway_runner_ref()
-    if runner is None:
-        return
-    loop = getattr(runner, "_gateway_loop", None)
-    if loop is None or loop.is_closed():
-        return
-    safe_schedule_threadsafe(
-        runner._deliver_delegated_start_notice(
-            source, message, reply_to=reply_to
-        ),
-        loop,
-        logger=logger,
-        log_message="delegated start notice scheduling error",
-    )
 
 
 _GATEWAY_PROVIDER_ERROR_RE = re.compile(
@@ -15286,29 +15182,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         reply_to: str | None = None,
     ) -> None:
         """Send a delegated-subagent start bubble outside the per-turn progress sender."""
-        if not _should_emit_delegated_task_start(source.platform):
-            return
-        adapter = self._adapter_for_source(source)
-        if not adapter or not source.chat_id:
-            return
-        thread_meta = self._thread_metadata_for_source(source, reply_to)
-        metadata = _non_conversational_metadata(thread_meta, platform=source.platform)
-        progress_reply_to = (
-            reply_to
-            if source.platform in (Platform.FEISHU, Platform.MATTERMOST)
-            and source.thread_id
-            and reply_to
-            else None
+        await deliver_delegated_start_notice(
+            self, source, message, reply_to=reply_to
         )
-        try:
-            await adapter.send(
-                chat_id=source.chat_id,
-                content=message,
-                reply_to=progress_reply_to,
-                metadata=metadata,
-            )
-        except Exception as exc:
-            logger.debug("delegated start delivery failed: %s", exc)
 
     async def _inject_watch_notification(self, synth_text: str, evt: dict) -> None:
         """Inject a watch-pattern notification as a synthetic message event.
@@ -17070,7 +16946,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         # Queue for progress messages (thread-safe)
         progress_queue = queue.Queue() if needs_progress_queue else None
-        _progress_sender_alive = [False]
         last_tool = [None]  # Mutable container for tracking in closure
         last_progress_msg = [None]  # Track last message for dedup
         repeat_count = [0]  # How many times the same message repeated
@@ -17144,22 +17019,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):
             """Callback invoked by agent on tool lifecycle events."""
-            # "log" mode: append tool.started lines to the log queue and stay
-            # silent in chat. Handled before the progress_queue guard because
-            # log mode runs without a chat progress queue.
-            if log_queue is not None:
-                if event_type == "tool.started" and tool_name and tool_name != "_thinking":
-                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    preview_str = f' "{preview}"' if preview else ""
-                    log_queue.put(f"{ts}  {tool_name}:{preview_str}".rstrip())
-                if not progress_queue:
-                    return
-
             # Delegated task start: surface which effective model was
             # selected for the child subagent (start-phase only, not completion).
-            # Must run before the _run_still_current() guard so background
-            # delegate_task(background=true) subagents can still notify after
-            # the parent turn ends.
+            # Must run before log-mode early-return and _run_still_current()
+            # so tool_progress:log and background delegate_task still notify.
             if event_type == "subagent.start" and _should_emit_delegated_task_start(
                 source.platform
             ):
@@ -17184,6 +17047,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 except Exception as _subagent_start_err:
                     logger.debug("subagent.start relay failed: %s", _subagent_start_err)
                 return
+
+            # "log" mode: append tool.started lines to the log queue and stay
+            # silent in chat. Handled before the progress_queue guard because
+            # log mode runs without a chat progress queue.
+            if log_queue is not None:
+                if event_type == "tool.started" and tool_name and tool_name != "_thinking":
+                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    preview_str = f' "{preview}"' if preview else ""
+                    log_queue.put(f"{ts}  {tool_name}:{preview_str}".rstrip())
+                if not progress_queue:
+                    return
 
             if not progress_queue or not _run_still_current():
                 return
@@ -17776,27 +17650,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                                 progress_lines = []
                                 last_progress_msg[0] = None
                                 repeat_count[0] = 0
-                            elif (
-                                isinstance(raw, tuple)
-                                and len(raw) == 2
-                                and raw[0] == _DELEGATED_TASK_START_MARKER
-                            ):
-                                # Stray delegated-start marker — deliver
-                                # standalone; must not land in progress_lines.
-                                try:
-                                    await adapter.send(
-                                        chat_id=source.chat_id,
-                                        content=str(raw[1]),
-                                        reply_to=_progress_reply_to,
-                                        metadata=_progress_metadata,
-                                    )
-                                except Exception:
-                                    pass
                             else:
-                                if isinstance(raw, tuple) and len(raw) == 2:
-                                    progress_lines.append(str(raw[1]))
-                                else:
-                                    progress_lines.append(raw)
+                                progress_lines.append(raw)
                                 await _roll_progress_overflow_if_needed()
                         except Exception:
                             break
@@ -19128,7 +18983,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         progress_task = None
         if needs_progress_queue:
             progress_task = asyncio.create_task(send_progress_messages())
-            _progress_sender_alive[0] = True
 
         # Start the tool-call log writer when tool_progress == "log".
         log_task = None
@@ -19901,7 +19755,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 return _preserve_queued_followup_history_offset(result, followup_result)
         finally:
             # Stop progress sender, interrupt monitor, and notification task
-            _progress_sender_alive[0] = False
             if progress_task:
                 progress_task.cancel()
             if log_task:

@@ -90,8 +90,6 @@ class DelegationStartAgent:
         self.tools = []
 
     def run_conversation(self, message, conversation_history=None, task_id=None):
-        import time
-
         cb = self.tool_progress_callback
         if cb is not None:
             cb(
@@ -104,9 +102,6 @@ class DelegationStartAgent:
                 task_count=1,
                 goal="Generate marketing copy",
             )
-            # Give the gateway's background progress-sender task a chance
-            # to drain the queue and render the delegated-start bubble.
-            time.sleep(0.35)
             # Must be suppressed because display.tool_progress=off.
             cb("tool.started", "terminal", "pwd", {})
 
@@ -117,46 +112,50 @@ class DelegationStartAgent:
         }
 
 
-def _setup_gateway(monkeypatch, tmp_path, *, platform: Platform, agent_cls, config_data):
-    import yaml
+class BatchDelegationStartAgent:
+    def __init__(self, **kwargs):
+        self.tool_progress_callback = kwargs.get("tool_progress_callback")
+        self.tools = []
 
-    if config_data:
-        (tmp_path / "config.yaml").write_text(yaml.dump(config_data), encoding="utf-8")
+    def run_conversation(self, message, conversation_history=None, task_id=None):
+        cb = self.tool_progress_callback
+        if cb is not None:
+            cb(
+                "subagent.start",
+                None,
+                "First delegated goal",
+                None,
+                model="model-a",
+                task_index=0,
+                task_count=2,
+                goal="First delegated goal",
+            )
+            cb(
+                "subagent.start",
+                None,
+                "Second delegated goal",
+                None,
+                model="model-b",
+                task_index=1,
+                task_count=2,
+                goal="Second delegated goal",
+            )
 
-    fake_dotenv = types.ModuleType("dotenv")
-    fake_dotenv.load_dotenv = lambda *args, **kwargs: None
-    monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
-
-    fake_run_agent = types.ModuleType("run_agent")
-    fake_run_agent.AIAgent = agent_cls
-    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
-
-    adapter = ProgressCaptureAdapter(platform=platform)
-    runner = _make_runner(adapter)
-
-    gateway_run = importlib.import_module("gateway.run")
-    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
-    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
-    monkeypatch.setattr(gateway_run, "_gateway_runner_ref", lambda: runner)
-
-    source = SessionSource(
-        platform=platform,
-        chat_id="-1001",
-        chat_type="group",
-        thread_id="thread-1",
-    )
-    session_key = f"agent:main:{platform.value}:{source.chat_type}:{source.chat_id}:{source.thread_id}"
-    return runner, adapter, source, session_key
+        return {
+            "final_response": "done",
+            "messages": [],
+            "api_calls": 1,
+        }
 
 
-def _setup_gateway_with_adapter(
+def _setup_gateway(
     monkeypatch,
     tmp_path,
     *,
     platform: Platform,
-    adapter: BasePlatformAdapter,
     agent_cls,
     config_data,
+    adapter: BasePlatformAdapter | None = None,
 ):
     import yaml
 
@@ -171,6 +170,7 @@ def _setup_gateway_with_adapter(
     fake_run_agent.AIAgent = agent_cls
     monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
 
+    adapter = adapter or ProgressCaptureAdapter(platform=platform)
     runner = _make_runner(adapter)
 
     gateway_run = importlib.import_module("gateway.run")
@@ -186,6 +186,14 @@ def _setup_gateway_with_adapter(
     )
     session_key = f"agent:main:{platform.value}:{source.chat_type}:{source.chat_id}:{source.thread_id}"
     return runner, adapter, source, session_key
+
+
+def _delegated_sent_contents(adapter: BasePlatformAdapter) -> list[str]:
+    return [
+        str(c.get("content", ""))
+        for c in adapter.sent
+        if "Task delegated" in str(c.get("content", ""))
+    ]
 
 
 @pytest.mark.asyncio
@@ -217,18 +225,13 @@ async def test_discord_delegated_start_emitted_when_tool_progress_off(monkeypatc
 
     assert result.get("final_response") == "done"
 
-    delegated_sent = [
-        str(c.get("content", ""))
-        for c in adapter.sent
-        if "Task delegated" in str(c.get("content", ""))
-    ]
+    delegated_sent = _delegated_sent_contents(adapter)
     assert len(delegated_sent) == 1
 
     content = delegated_sent[0]
     assert "Generate marketing copy" in content
     assert "kimi-k2.6:cloud" in content
 
-    # Standalone bubble — not merged into tool-progress edits.
     delegated_edits = [
         str(c.get("content", ""))
         for c in adapter.edits
@@ -236,9 +239,52 @@ async def test_discord_delegated_start_emitted_when_tool_progress_off(monkeypatc
     ]
     assert delegated_edits == []
 
-    # Tool progress must be suppressed with display.tool_progress=off.
     blob = "\n".join([str(c["content"]) for c in (adapter.sent + adapter.edits)])
     assert "pwd" not in blob
+
+
+@pytest.mark.asyncio
+async def test_delegated_start_emitted_when_tool_progress_log(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "log")
+
+    runner, adapter, source, session_key = _setup_gateway(
+        monkeypatch,
+        tmp_path,
+        platform=Platform.DISCORD,
+        agent_cls=DelegationStartAgent,
+        config_data={
+            "display": {
+                "tool_progress": "log",
+                "thinking_progress": False,
+                "delegated_start_notifications": True,
+            }
+        },
+    )
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="sess-delegation-log",
+        session_key=session_key,
+    )
+
+    assert result.get("final_response") == "done"
+
+    delegated_sent = _delegated_sent_contents(adapter)
+    assert len(delegated_sent) == 1
+    assert "Generate marketing copy" in delegated_sent[0]
+    assert "kimi-k2.6:cloud" in delegated_sent[0]
+
+    blob = "\n".join([str(c["content"]) for c in (adapter.sent + adapter.edits)])
+    assert "pwd" not in blob
+
+    log_path = tmp_path / "logs" / "tool_calls.log"
+    assert log_path.exists()
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "terminal:" in log_text
+    assert "pwd" in log_text
 
 
 @pytest.mark.asyncio
@@ -277,6 +323,83 @@ async def test_delegated_start_suppressed_when_notifications_disabled(
     assert "pwd" not in blob
 
 
+@pytest.mark.asyncio
+async def test_delegated_start_suppressed_by_platform_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
+
+    runner, adapter, source, session_key = _setup_gateway(
+        monkeypatch,
+        tmp_path,
+        platform=Platform.DISCORD,
+        agent_cls=DelegationStartAgent,
+        config_data={
+            "display": {
+                "tool_progress": "off",
+                "thinking_progress": False,
+                "delegated_start_notifications": True,
+                "platforms": {
+                    "discord": {
+                        "delegated_start_notifications": False,
+                    }
+                },
+            }
+        },
+    )
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="sess-delegation-platform-off",
+        session_key=session_key,
+    )
+
+    assert result.get("final_response") == "done"
+
+    blob = "\n".join([str(c["content"]) for c in (adapter.sent + adapter.edits)])
+    assert "Task delegated" not in blob
+    assert "pwd" not in blob
+
+
+@pytest.mark.asyncio
+async def test_batch_delegation_emits_indexed_start_bubbles(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
+
+    runner, adapter, source, session_key = _setup_gateway(
+        monkeypatch,
+        tmp_path,
+        platform=Platform.DISCORD,
+        agent_cls=BatchDelegationStartAgent,
+        config_data={
+            "display": {
+                "tool_progress": "off",
+                "thinking_progress": False,
+                "delegated_start_notifications": True,
+            }
+        },
+    )
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="sess-delegation-batch",
+        session_key=session_key,
+    )
+
+    assert result.get("final_response") == "done"
+
+    delegated_sent = _delegated_sent_contents(adapter)
+    assert len(delegated_sent) == 2
+
+    indexed = [c for c in delegated_sent if "[1]" in c or "[2]" in c]
+    assert len(indexed) == 2
+    assert any("First delegated goal" in c and "model-a" in c for c in delegated_sent)
+    assert any("Second delegated goal" in c and "model-b" in c for c in delegated_sent)
+
+
 def test_delegated_message_formatter_helper(monkeypatch, tmp_path):
     gateway_run = importlib.import_module("gateway.run")
     msg = gateway_run._build_delegated_task_start_message(
@@ -300,7 +423,7 @@ def test_delegated_message_formatter_truncates_long_goal_and_model():
     long_goal = "g" * 100
     long_model = "m" * 50
     msg = gateway_run._build_delegated_task_start_message(long_goal, long_model)
-    assert "g" * 60 + "..." in msg
+    assert "g" * 55 + "..." in msg
     assert "m" * 35 + "..." in msg
     assert long_goal not in msg
     assert long_model not in msg
@@ -369,7 +492,7 @@ async def test_delegated_start_sent_on_non_edit_adapter_when_tool_progress_off(
 
     adapter = NonEditProgressCaptureAdapter(platform=Platform.BLUEBUBBLES)
 
-    runner, adapter, source, session_key = _setup_gateway_with_adapter(
+    runner, adapter, source, session_key = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.BLUEBUBBLES,
@@ -395,11 +518,7 @@ async def test_delegated_start_sent_on_non_edit_adapter_when_tool_progress_off(
 
     assert result.get("final_response") == "done"
 
-    delegated_sent = [
-        str(c.get("content", ""))
-        for c in adapter.sent
-        if "Task delegated" in str(c.get("content", ""))
-    ]
+    delegated_sent = _delegated_sent_contents(adapter)
     assert len(delegated_sent) == 1
 
     content = delegated_sent[0]
@@ -493,4 +612,3 @@ async def test_delegated_start_durable_after_turn_ends(monkeypatch, tmp_path):
     content = next(iter(delegated_contents))
     assert "Background research task" in content
     assert "kimi-k2.6:cloud" in content
-

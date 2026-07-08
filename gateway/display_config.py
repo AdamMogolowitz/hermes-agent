@@ -253,6 +253,7 @@ def _normalise(setting: str, value: Any) -> Any:
         "busy_ack_detail",
         "busy_steer_ack_enabled",
         "thinking_progress",
+        "delegated_start_notifications",
     }:
         if isinstance(value, str):
             val = value.strip().lower()

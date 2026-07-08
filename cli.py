@@ -54,6 +54,11 @@ import yaml
 from hermes_cli.fallback_config import get_fallback_chain
 from hermes_cli.cli_agent_setup_mixin import CLIAgentSetupMixin
 from hermes_cli.cli_commands_mixin import CLICommandsMixin
+from agent.delegation_display import (
+    DELEGATED_GOAL_PREVIEW_MAX,
+    DELEGATED_MODEL_PREVIEW_MAX,
+    truncate_delegated_label,
+)
 
 # prompt_toolkit for fixed input area TUI
 from prompt_toolkit.history import FileHistory
@@ -10906,14 +10911,13 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             spinner = getattr(self.agent, "_delegate_spinner", None) if self.agent else None
             if spinner:
                 return
+
             preview_text = (preview or kwargs.get("goal") or "").strip()
             model_label = str(kwargs.get("model") or "").strip()
-            short = (
-                (preview_text[:55] + "...") if len(preview_text) > 55 else preview_text
-            )
+            short = truncate_delegated_label(preview_text, DELEGATED_GOAL_PREVIEW_MAX)
             if model_label:
-                model_short = (
-                    (model_label[:35] + "...") if len(model_label) > 35 else model_label
+                model_short = truncate_delegated_label(
+                    model_label, DELEGATED_MODEL_PREVIEW_MAX
                 )
                 line = f"  {_DIM}┊ 🔀 {short} [model: {model_short}]{_RST}"
             elif short:
