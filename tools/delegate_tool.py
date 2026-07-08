@@ -890,8 +890,17 @@ def _build_child_progress_callback(
                 short = (
                     (goal_label[:55] + "...") if len(goal_label) > 55 else goal_label
                 )
+                model_label = (model or "").strip() if isinstance(model, str) else ""
                 try:
-                    spinner.print_above(f" {prefix}├─ 🔀 {short}")
+                    if model_label:
+                        # Keep the model label compact to prevent runaway
+                        # console lines on very long provider/model strings.
+                        model_short = (
+                            (model_label[:35] + "...") if len(model_label) > 35 else model_label
+                        )
+                        spinner.print_above(f" {prefix}├─ 🔀 {short} [model: {model_short}]")
+                    else:
+                        spinner.print_above(f" {prefix}├─ 🔀 {short}")
                 except Exception as e:
                     logger.debug("Spinner print_above failed: %s", e)
             _relay("subagent.start", preview=preview or goal_label or "", **kwargs)

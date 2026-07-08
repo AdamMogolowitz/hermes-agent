@@ -107,6 +107,20 @@ def _gateway_surface_passes_raw_text(platform: Any) -> bool:
     return _gateway_platform_value(platform) in _GATEWAY_RAW_TEXT_PLATFORMS
 
 
+def _build_discord_delegated_task_start_message(goal: str, model: str) -> str:
+    """Format a one-shot delegated task start notification.
+
+    Cache-safe + side-effect free: used by the gateway progress callback.
+    """
+    _goal = (goal or "").strip()
+    _model = (model or "").strip()
+    return (
+        "🚀 **Task delegated**\n"
+        f"• Model: `{_model}`\n"
+        f"• Goal: {_goal}"
+    )
+
+
 _GATEWAY_PROVIDER_ERROR_RE = re.compile(
     r"("  # infrastructure/provider error preambles, not ordinary assistant prose
     r"api\s+(?:call\s+)?failed"
@@ -16908,7 +16922,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             require_platform_override_for={Platform.MATTERMOST},
         )
         _thinking_enabled = _thinking_mode != "off"
-        needs_progress_queue = tool_progress_enabled or _thinking_enabled
+        # Always create the progress callback queue for Discord so we can
+        # surface delegated-subagent start notifications even when
+        # display.tool_progress is off.
+        needs_progress_queue = (
+            tool_progress_enabled
+            or _thinking_enabled
+            or source.platform == Platform.DISCORD
+        )
 
 
         # Queue for progress messages (thread-safe)
@@ -17040,6 +17061,20 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 msg = f"💬 {thinking_text}" if thinking_text else None
                 if msg:
                     progress_queue.put(msg)
+                return
+
+            # Delegated task start: surface which effective model was selected
+            # for the child subagent (start-phase only, not completion).
+            if event_type == "subagent.start" and source.platform == Platform.DISCORD:
+                try:
+                    _goal = str(preview or kwargs.get("goal") or "").strip()
+                    _model = str(kwargs.get("model") or "").strip()
+                    # Keep this message short: it will be sent as a single
+                    # non-editable bubble when tool_progress is off.
+                    msg = _build_discord_delegated_task_start_message(_goal, _model)
+                    progress_queue.put(msg)
+                except Exception as _subagent_start_err:
+                    logger.debug("subagent.start relay failed: %s", _subagent_start_err)
                 return
 
             # If tool_progress is off, only _thinking passes through (above).

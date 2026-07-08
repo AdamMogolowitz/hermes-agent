@@ -118,6 +118,54 @@ class TestBuildChildProgressCallback:
         assert "💭" in output
         assert "search for papers" in output
 
+    def test_cli_spinner_subagent_start_includes_model(self):
+        """subagent.start should show a compact model label in the CLI tree."""
+        buf = io.StringIO()
+        spinner = KawaiiSpinner("delegating")
+        spinner._out = buf
+        spinner.running = True
+
+        parent = MagicMock()
+        parent._delegate_spinner = spinner
+        parent.tool_progress_callback = None
+
+        cb = _build_child_progress_callback(
+            0,
+            "test goal",
+            parent,
+            model="kimi-k2.6:cloud",
+        )
+        cb("subagent.start", preview="test goal")
+
+        output = buf.getvalue()
+        assert "├─ 🔀" in output
+        assert "test goal" in output
+        assert "[model: kimi-k2.6:cloud]" in output
+
+    def test_cli_spinner_subagent_start_omits_model_when_none(self):
+        """subagent.start should omit the model label when model is unset."""
+        buf = io.StringIO()
+        spinner = KawaiiSpinner("delegating")
+        spinner._out = buf
+        spinner.running = True
+
+        parent = MagicMock()
+        parent._delegate_spinner = spinner
+        parent.tool_progress_callback = None
+
+        cb = _build_child_progress_callback(
+            0,
+            "test goal",
+            parent,
+            model=None,
+        )
+        cb("subagent.start", preview="test goal")
+
+        output = buf.getvalue()
+        assert "├─ 🔀" in output
+        assert "test goal" in output
+        assert "[model:" not in output
+
     def test_gateway_batched_progress(self):
         """Gateway path: each tool.started relays a subagent.tool event, and a
         subagent.progress summary fires once BATCH_SIZE tools accumulate."""
