@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
+import time
 import types
 from types import SimpleNamespace
 
@@ -135,6 +137,7 @@ def _setup_gateway(monkeypatch, tmp_path, *, platform: Platform, agent_cls, conf
     gateway_run = importlib.import_module("gateway.run")
     monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
     monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
+    monkeypatch.setattr(gateway_run, "_gateway_runner_ref", lambda: runner)
 
     source = SessionSource(
         platform=platform,
@@ -173,6 +176,7 @@ def _setup_gateway_with_adapter(
     gateway_run = importlib.import_module("gateway.run")
     monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
     monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
+    monkeypatch.setattr(gateway_run, "_gateway_runner_ref", lambda: runner)
 
     source = SessionSource(
         platform=platform,
@@ -232,6 +236,13 @@ def test_delegated_message_formatter_helper(monkeypatch, tmp_path):
     assert "🚀 **Task delegated**" in msg
     assert "kimi-k2.6:cloud" in msg
     assert "• Goal: my goal" in msg
+
+
+def test_delegated_message_formatter_omits_empty_goal():
+    gateway_run = importlib.import_module("gateway.run")
+    msg = gateway_run._build_delegated_task_start_message("", "kimi-k2.6:cloud")
+    assert "• Goal:" not in msg
+    assert "kimi-k2.6:cloud" in msg
 
 
 def test_delegated_message_formatter_truncates_long_goal_and_model():
@@ -341,4 +352,83 @@ async def test_delegated_start_sent_on_non_edit_adapter_when_tool_progress_off(
 
     blob = "\n".join([str(c["content"]) for c in adapter.sent])
     assert "pwd" not in blob
+
+
+class BackgroundDelegationStartAgent:
+    """Fires subagent.start after a delay, simulating background delegation."""
+
+    def __init__(self, **kwargs):
+        self.tool_progress_callback = kwargs.get("tool_progress_callback")
+        self.tools = []
+
+    def run_conversation(self, message, conversation_history=None, task_id=None):
+        import threading
+        import time
+
+        cb = self.tool_progress_callback
+
+        def _delayed_start():
+            time.sleep(0.45)
+            if cb is not None:
+                cb(
+                    "subagent.start",
+                    None,
+                    "Background research task",
+                    None,
+                    model="kimi-k2.6:cloud",
+                    task_index=0,
+                    task_count=1,
+                    goal="Background research task",
+                )
+
+        if cb is not None:
+            threading.Thread(target=_delayed_start, daemon=True).start()
+
+        return {
+            "final_response": "done",
+            "messages": [],
+            "api_calls": 1,
+        }
+
+
+@pytest.mark.asyncio
+async def test_delegated_start_durable_after_turn_ends(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
+
+    runner, adapter, source, session_key = _setup_gateway(
+        monkeypatch,
+        tmp_path,
+        platform=Platform.DISCORD,
+        agent_cls=BackgroundDelegationStartAgent,
+        config_data={"display": {"tool_progress": "off", "thinking_progress": False}},
+    )
+    runner._gateway_loop = asyncio.get_running_loop()
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="sess-delegation-bg",
+        session_key=session_key,
+    )
+
+    assert result.get("final_response") == "done"
+
+    deadline = time.time() + 2.0
+    delegated_contents = set()
+    while time.time() < deadline:
+        delegated_contents = {
+            str(c.get("content", ""))
+            for c in (adapter.sent + adapter.edits)
+            if "Task delegated" in str(c.get("content", ""))
+        }
+        if delegated_contents:
+            break
+        await asyncio.sleep(0.05)
+
+    assert len(delegated_contents) == 1
+    content = next(iter(delegated_contents))
+    assert "Background research task" in content
+    assert "kimi-k2.6:cloud" in content
 

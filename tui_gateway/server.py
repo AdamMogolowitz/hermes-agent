@@ -3567,7 +3567,8 @@ def _on_tool_progress(
     _args: dict | None = None,
     **_kwargs,
 ):
-    if not _tool_progress_enabled(sid):
+    _subagent_lifecycle = event_type.startswith("subagent.")
+    if not _tool_progress_enabled(sid) and not _subagent_lifecycle:
         return
     if event_type == "tool.started" and name:
         # `_on_tool_start` already emits the authoritative `tool.start` with

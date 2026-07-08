@@ -149,11 +149,54 @@ def _build_delegated_task_start_message(
     lines = [header]
     if _model:
         lines.append(_tr("gateway.delegated.label_model", model=_model))
-    lines.append(_tr("gateway.delegated.label_goal", goal=_goal))
+    if _goal:
+        lines.append(_tr("gateway.delegated.label_goal", goal=_goal))
     return "\n".join(lines)
 
 
 _DELEGATED_TASK_START_MARKER = "__delegate_start__"
+
+
+def _should_emit_delegated_task_start(platform: Any) -> bool:
+    """True for chat platforms that should receive delegated-start bubbles."""
+    try:
+        p = platform if isinstance(platform, Platform) else Platform(str(platform))
+    except Exception:
+        return False
+    return p not in {
+        Platform.WEBHOOK,
+        Platform.MSGRAPH_WEBHOOK,
+        Platform.API_SERVER,
+        Platform.LOCAL,
+    }
+
+
+def schedule_delegated_start_notice(
+    *,
+    source: "SessionSource",
+    message: str,
+    reply_to: str | None = None,
+) -> None:
+    """Schedule a one-shot delegated-start bubble on the gateway loop.
+
+    Used when ``subagent.start`` fires after the parent turn ends (e.g.
+    ``delegate_task(background=true)``) and the per-turn progress sender
+    task has already been cancelled.
+    """
+    runner = _gateway_runner_ref()
+    if runner is None:
+        return
+    loop = getattr(runner, "_gateway_loop", None)
+    if loop is None or loop.is_closed():
+        return
+    safe_schedule_threadsafe(
+        runner._deliver_delegated_start_notice(
+            source, message, reply_to=reply_to
+        ),
+        loop,
+        logger=logger,
+        log_message="delegated start notice scheduling error",
+    )
 
 
 _GATEWAY_PROVIDER_ERROR_RE = re.compile(
@@ -15222,6 +15265,38 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             user_name=str(evt.get("user_name") or "").strip() or None,
         )
 
+    async def _deliver_delegated_start_notice(
+        self,
+        source: "SessionSource",
+        message: str,
+        *,
+        reply_to: str | None = None,
+    ) -> None:
+        """Send a delegated-subagent start bubble outside the per-turn progress sender."""
+        if not _should_emit_delegated_task_start(source.platform):
+            return
+        adapter = self._adapter_for_source(source)
+        if not adapter or not source.chat_id:
+            return
+        thread_meta = self._thread_metadata_for_source(source, reply_to)
+        metadata = _non_conversational_metadata(thread_meta, platform=source.platform)
+        progress_reply_to = (
+            reply_to
+            if source.platform in (Platform.FEISHU, Platform.MATTERMOST)
+            and source.thread_id
+            and reply_to
+            else None
+        )
+        try:
+            await adapter.send(
+                chat_id=source.chat_id,
+                content=message,
+                reply_to=progress_reply_to,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.debug("delegated start delivery failed: %s", exc)
+
     async def _inject_watch_notification(self, synth_text: str, evt: dict) -> None:
         """Inject a watch-pattern notification as a synthetic message event.
 
@@ -16957,9 +17032,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             require_platform_override_for={Platform.MATTERMOST},
         )
         _thinking_enabled = _thinking_mode != "off"
-        def _should_emit_delegated_task_start(p: Platform) -> bool:
-            # Webhooks/api-server/local are non-chat/programmatic surfaces.
-            return p not in {Platform.WEBHOOK, Platform.MSGRAPH_WEBHOOK, Platform.API_SERVER, Platform.LOCAL}
 
         # Create the progress callback queue not only when tool/typing
         # progress is on, but also when we need to surface delegated
@@ -16973,6 +17045,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         # Queue for progress messages (thread-safe)
         progress_queue = queue.Queue() if needs_progress_queue else None
+        _progress_sender_alive = [False]
         last_tool = [None]  # Mutable container for tracking in closure
         last_progress_msg = [None]  # Track last message for dedup
         repeat_count = [0]  # How many times the same message repeated
@@ -17056,6 +17129,44 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     log_queue.put(f"{ts}  {tool_name}:{preview_str}".rstrip())
                 if not progress_queue:
                     return
+
+            # Delegated task start: surface which effective model was
+            # selected for the child subagent (start-phase only, not completion).
+            # Must run before the _run_still_current() guard so background
+            # delegate_task(background=true) subagents can still notify after
+            # the parent turn ends.
+            if event_type == "subagent.start" and _should_emit_delegated_task_start(
+                source.platform
+            ):
+                try:
+                    _goal = str(preview or kwargs.get("goal") or "").strip()
+                    _model = str(kwargs.get("model") or "").strip()
+                    _task_index = int(kwargs.get("task_index") or 0)
+                    _task_count = int(kwargs.get("task_count") or 1)
+                    msg = _build_delegated_task_start_message(
+                        _goal,
+                        _model,
+                        task_index=_task_index,
+                        task_count=_task_count,
+                    )
+                    if (
+                        progress_queue
+                        and _run_still_current()
+                        and _progress_sender_alive[0]
+                    ):
+                        # Use a marker so send_progress_messages can deliver this
+                        # bubble even on non-edit-capable adapters (iMessage/BlueBubbles).
+                        progress_queue.put((_DELEGATED_TASK_START_MARKER, msg))
+                    else:
+                        schedule_delegated_start_notice(
+                            source=source,
+                            message=msg,
+                            reply_to=event_message_id,
+                        )
+                except Exception as _subagent_start_err:
+                    logger.debug("subagent.start relay failed: %s", _subagent_start_err)
+                return
+
             if not progress_queue or not _run_still_current():
                 return
 
@@ -17100,27 +17211,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 msg = f"💬 {thinking_text}" if thinking_text else None
                 if msg:
                     progress_queue.put(msg)
-                return
-
-            # Delegated task start: surface which effective model was
-            # selected for the child subagent (start-phase only, not completion).
-            if event_type == "subagent.start" and _should_emit_delegated_task_start(source.platform):
-                try:
-                    _goal = str(preview or kwargs.get("goal") or "").strip()
-                    _model = str(kwargs.get("model") or "").strip()
-                    _task_index = int(kwargs.get("task_index") or 0)
-                    _task_count = int(kwargs.get("task_count") or 1)
-                    msg = _build_delegated_task_start_message(
-                        _goal,
-                        _model,
-                        task_index=_task_index,
-                        task_count=_task_count,
-                    )
-                    # Use a marker so send_progress_messages can deliver this
-                    # bubble even on non-edit-capable adapters (iMessage/BlueBubbles).
-                    progress_queue.put((_DELEGATED_TASK_START_MARKER, msg))
-                except Exception as _subagent_start_err:
-                    logger.debug("subagent.start relay failed: %s", _subagent_start_err)
                 return
 
             # If tool_progress is off, only _thinking passes through (above).
@@ -19055,6 +19145,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         progress_task = None
         if needs_progress_queue:
             progress_task = asyncio.create_task(send_progress_messages())
+            _progress_sender_alive[0] = True
 
         # Start the tool-call log writer when tool_progress == "log".
         log_task = None
@@ -19827,6 +19918,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 return _preserve_queued_followup_history_offset(result, followup_result)
         finally:
             # Stop progress sender, interrupt monitor, and notification task
+            _progress_sender_alive[0] = False
             if progress_task:
                 progress_task.cancel()
             if log_task:

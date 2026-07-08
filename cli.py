@@ -10902,6 +10902,28 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             self._invalidate()
             return
 
+        if event_type == "subagent.start":
+            spinner = getattr(self.agent, "_delegate_spinner", None) if self.agent else None
+            if spinner:
+                return
+            preview_text = (preview or kwargs.get("goal") or "").strip()
+            model_label = str(kwargs.get("model") or "").strip()
+            short = (
+                (preview_text[:55] + "...") if len(preview_text) > 55 else preview_text
+            )
+            if model_label:
+                model_short = (
+                    (model_label[:35] + "...") if len(model_label) > 35 else model_label
+                )
+                line = f"  {_DIM}┊ 🔀 {short} [model: {model_short}]{_RST}"
+            elif short:
+                line = f"  {_DIM}┊ 🔀 {short}{_RST}"
+            else:
+                return
+            _cprint(line)
+            self._invalidate()
+            return
+
         # Feed the pet: tools mean "running" (not reasoning); a failed tool
         # latches the turn so it ends on a sulk.
         if event_type == "tool.started":

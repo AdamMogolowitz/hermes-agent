@@ -1876,7 +1876,11 @@ def _run_single_child(
         _heartbeat_thread.start()
         if child_progress_cb:
             try:
-                child_progress_cb("subagent.start", preview=goal)
+                _start_model = getattr(child, "model", None)
+                _start_kwargs: Dict[str, Any] = {}
+                if isinstance(_start_model, str) and _start_model.strip():
+                    _start_kwargs["model"] = _start_model.strip()
+                child_progress_cb("subagent.start", preview=goal, **_start_kwargs)
             except Exception as e:
                 logger.debug("Progress callback start failed: %s", e)
 

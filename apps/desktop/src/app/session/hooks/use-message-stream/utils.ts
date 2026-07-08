@@ -154,12 +154,14 @@ export function delegateTaskPayloads(
 
   return tasks.map((task, index) => {
     const goal = firstString(task.goal, args.goal, payload.context) || 'Delegated task'
+    const model = firstString(task.model, args.model, payload.model)
     const summary = firstString(result.summary, payload.summary, payload.message)
 
     return {
       depth: 0,
       duration_seconds: payload.duration_s,
       goal,
+      model: model || undefined,
       status,
       subagent_id: `delegate-tool:${toolId}:${index}`,
       summary: summary || undefined,
