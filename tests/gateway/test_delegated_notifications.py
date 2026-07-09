@@ -16,6 +16,7 @@ from gateway.platform_utils import (
 )
 from gateway.platforms.base import BasePlatformAdapter, SendResult
 from gateway.session import SessionSource
+from gateway.session_state import AGENT_PENDING_SENTINEL
 
 
 @pytest.mark.parametrize(
@@ -238,6 +239,47 @@ async def test_deliver_delegated_start_notice_drops_when_running_agent_interrupt
         "🚀 **Task delegated**",
         session_key=session_key,
         run_generation=1,
+    )
+
+    assert adapter.sent == []
+
+
+@pytest.mark.asyncio
+async def test_deliver_delegated_start_notice_drops_without_run_generation():
+    adapter = _StubAdapter()
+    runner = _StubRunner(adapter)
+    source = _discord_source()
+    session_key = "agent:main:discord:group:-1001:thread-1"
+
+    await deliver_delegated_start_notice(
+        runner,
+        source,
+        "🚀 **Task delegated**",
+        session_key=session_key,
+        run_generation=None,
+    )
+
+    assert adapter.sent == []
+
+
+@pytest.mark.asyncio
+async def test_deliver_delegated_start_notice_drops_when_pending_sentinel_and_getter_interrupted():
+    """track_agent race: slot is PENDING but agent_holder already interrupted."""
+    adapter = _StubAdapter()
+    runner = _StubRunner(adapter)
+    source = _discord_source()
+    session_key = "agent:main:discord:group:-1001:thread-1"
+    runner._running_agents[session_key] = AGENT_PENDING_SENTINEL
+    runner._session_run_generation[session_key] = 1
+    interrupted = SimpleNamespace(is_interrupted=True)
+
+    await deliver_delegated_start_notice(
+        runner,
+        source,
+        "🚀 **Task delegated**",
+        session_key=session_key,
+        run_generation=1,
+        live_agent_getter=lambda: interrupted,
     )
 
     assert adapter.sent == []

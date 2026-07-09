@@ -19,6 +19,7 @@ from gateway.platform_utils import (
     non_conversational_metadata,
     platform_uses_thread_reply,
 )
+from gateway.session_state import AGENT_PENDING_SENTINEL
 from gateway.runner_registry import get_gateway_runner
 from utils import is_truthy_value
 
@@ -98,12 +99,8 @@ def _session_is_interrupted(
             return True
     if session_key:
         running = runner._running_agents.get(session_key)
-        if running is not None:
-            from gateway.run import _AGENT_PENDING_SENTINEL
-
-            if running is not _AGENT_PENDING_SENTINEL and getattr(
-                running, "is_interrupted", False
-            ):
+        if running is not None and running is not AGENT_PENDING_SENTINEL:
+            if getattr(running, "is_interrupted", False):
                 return True
     return False
 
@@ -210,10 +207,11 @@ async def deliver_delegated_start_notice(
         return
     if session_key and run_generation is None:
         logger.debug(
-            "delegated start notice: session_key without run_generation "
-            "(session_key=%s) — stale guard skipped",
+            "delegated start notice dropped: session_key without run_generation "
+            "(session_key=%s)",
             session_key,
         )
+        return
     if (
         session_key
         and run_generation is not None

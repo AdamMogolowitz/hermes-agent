@@ -70,6 +70,7 @@ from gateway.platform_utils import (
     non_conversational_metadata as _non_conversational_metadata,
 )
 from gateway.runner_registry import get_gateway_runner, set_gateway_runner
+from gateway.session_state import AGENT_PENDING_SENTINEL as _AGENT_PENDING_SENTINEL
 
 # --- Agent cache tuning ---------------------------------------------------
 # Bounds the per-session AIAgent cache to prevent unbounded growth in
@@ -1804,11 +1805,7 @@ def _own_policy_open_startup_violation(config) -> Optional[str]:
     return None
 
 
-# Sentinel placed into _running_agents immediately when a session starts
-# processing, *before* any await.  Prevents a second message for the same
-# session from bypassing the "already running" guard during the async gap
-# between the guard check and actual agent creation.
-_AGENT_PENDING_SENTINEL = object()
+# Sentinel for in-flight session slots — see gateway.session_state.AGENT_PENDING_SENTINEL.
 
 
 def _resolve_runtime_agent_kwargs() -> dict:

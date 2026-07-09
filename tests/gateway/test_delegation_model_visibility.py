@@ -129,7 +129,8 @@ def _setup_gateway(
         thread_id="thread-1",
     )
     session_key = f"agent:main:{platform.value}:{source.chat_type}:{source.chat_id}:{source.thread_id}"
-    return runner, adapter, source, session_key
+    run_generation = runner._begin_session_run_generation(session_key)
+    return runner, adapter, source, session_key, run_generation
 
 
 def _delegated_sent_contents(adapter: BasePlatformAdapter) -> list[str]:
@@ -144,7 +145,7 @@ def _delegated_sent_contents(adapter: BasePlatformAdapter) -> list[str]:
 async def test_discord_delegated_start_emitted_when_tool_progress_off(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
 
-    runner, adapter, source, session_key = _setup_gateway(
+    runner, adapter, source, session_key, run_generation = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.DISCORD,
@@ -165,6 +166,7 @@ async def test_discord_delegated_start_emitted_when_tool_progress_off(monkeypatc
         source=source,
         session_id="sess-delegation-start",
         session_key=session_key,
+        run_generation=run_generation,
     )
 
     assert result.get("final_response") == "done"
@@ -191,7 +193,7 @@ async def test_discord_delegated_start_emitted_when_tool_progress_off(monkeypatc
 async def test_delegated_start_emitted_when_tool_progress_log(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "log")
 
-    runner, adapter, source, session_key = _setup_gateway(
+    runner, adapter, source, session_key, run_generation = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.DISCORD,
@@ -212,6 +214,7 @@ async def test_delegated_start_emitted_when_tool_progress_log(monkeypatch, tmp_p
         source=source,
         session_id="sess-delegation-log",
         session_key=session_key,
+        run_generation=run_generation,
     )
 
     assert result.get("final_response") == "done"
@@ -237,7 +240,7 @@ async def test_delegated_start_suppressed_when_notifications_disabled(
 ):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
 
-    runner, adapter, source, session_key = _setup_gateway(
+    runner, adapter, source, session_key, run_generation = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.DISCORD,
@@ -258,6 +261,7 @@ async def test_delegated_start_suppressed_when_notifications_disabled(
         source=source,
         session_id="sess-delegation-start",
         session_key=session_key,
+        run_generation=run_generation,
     )
 
     assert result.get("final_response") == "done"
@@ -271,7 +275,7 @@ async def test_delegated_start_suppressed_when_notifications_disabled(
 async def test_delegated_start_suppressed_by_platform_override(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
 
-    runner, adapter, source, session_key = _setup_gateway(
+    runner, adapter, source, session_key, run_generation = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.DISCORD,
@@ -297,6 +301,7 @@ async def test_delegated_start_suppressed_by_platform_override(monkeypatch, tmp_
         source=source,
         session_id="sess-delegation-platform-off",
         session_key=session_key,
+        run_generation=run_generation,
     )
 
     assert result.get("final_response") == "done"
@@ -310,7 +315,7 @@ async def test_delegated_start_suppressed_by_platform_override(monkeypatch, tmp_
 async def test_batch_delegation_emits_indexed_start_bubbles(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
 
-    runner, adapter, source, session_key = _setup_gateway(
+    runner, adapter, source, session_key, run_generation = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.DISCORD,
@@ -331,6 +336,7 @@ async def test_batch_delegation_emits_indexed_start_bubbles(monkeypatch, tmp_pat
         source=source,
         session_id="sess-delegation-batch",
         session_key=session_key,
+        run_generation=run_generation,
     )
 
     assert result.get("final_response") == "done"
@@ -353,7 +359,7 @@ async def test_delegated_start_sent_on_non_edit_adapter_when_tool_progress_off(
 
     adapter = NonEditProgressCaptureAdapter(platform=Platform.BLUEBUBBLES)
 
-    runner, adapter, source, session_key = _setup_gateway(
+    runner, adapter, source, session_key, run_generation = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.BLUEBUBBLES,
@@ -375,6 +381,7 @@ async def test_delegated_start_sent_on_non_edit_adapter_when_tool_progress_off(
         source=source,
         session_id="sess-delegation-start",
         session_key=session_key,
+        run_generation=run_generation,
     )
 
     assert result.get("final_response") == "done"
@@ -431,7 +438,7 @@ class BackgroundDelegationStartAgent:
 async def test_delegated_start_durable_after_turn_ends(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
 
-    runner, adapter, source, session_key = _setup_gateway(
+    runner, adapter, source, session_key, run_generation = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.DISCORD,
@@ -453,6 +460,7 @@ async def test_delegated_start_durable_after_turn_ends(monkeypatch, tmp_path):
         source=source,
         session_id="sess-delegation-bg",
         session_key=session_key,
+        run_generation=run_generation,
     )
 
     assert result.get("final_response") == "done"
@@ -481,7 +489,7 @@ async def test_delegated_start_suppressed_when_session_interrupted(
 ):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
 
-    runner, adapter, source, session_key = _setup_gateway(
+    runner, adapter, source, session_key, run_generation = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.DISCORD,
@@ -502,6 +510,7 @@ async def test_delegated_start_suppressed_when_session_interrupted(
         source=source,
         session_id="sess-delegation-interrupted",
         session_key=session_key,
+        run_generation=run_generation,
     )
 
     assert result.get("final_response") == "done"
@@ -516,7 +525,7 @@ async def test_delegated_start_suppressed_when_session_generation_stale(
 ):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
 
-    runner, adapter, source, session_key = _setup_gateway(
+    runner, adapter, source, session_key, run_generation = _setup_gateway(
         monkeypatch,
         tmp_path,
         platform=Platform.DISCORD,
@@ -530,7 +539,6 @@ async def test_delegated_start_suppressed_when_session_generation_stale(
         },
     )
     runner._gateway_loop = asyncio.get_running_loop()
-    run_generation = runner._begin_session_run_generation(session_key)
 
     async def _invalidate_generation():
         await asyncio.sleep(0.2)
