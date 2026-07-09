@@ -84,7 +84,7 @@ gateway:
   delegated:
     start_header:          "🚀 **Task delegated**"
     start_header_indexed:  "🚀 **[{index}] Task delegated**"
-    label_model:           "• Model: `{model}`"
+    label_model:           "• Configured model: `{model}`"
     label_goal:            "• Goal: {goal}"
 
   branch:

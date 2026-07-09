@@ -69,7 +69,7 @@ gateway:
   delegated:
     start_header:          "🚀 **Feladat delegálva**"
     start_header_indexed:  "🚀 **[{index}] Feladat delegálva**"
-    label_model:           "• Modell: `{model}`"
+    label_model:           "• Beállított modell: `{model}`"
     label_goal:            "• Cél: {goal}"
 
   branch:

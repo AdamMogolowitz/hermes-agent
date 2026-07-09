@@ -69,7 +69,7 @@ gateway:
   delegated:
     start_header:          "🚀 **작업 위임됨**"
     start_header_indexed:  "🚀 **[{index}] 작업 위임됨**"
-    label_model:           "• 모델: `{model}`"
+    label_model:           "• 설정된 모델: `{model}`"
     label_goal:            "• 목표: {goal}"
 
   branch:

@@ -69,7 +69,7 @@ gateway:
   delegated:
     start_header:          "🚀 **Задача делегирована**"
     start_header_indexed:  "🚀 **[{index}] Задача делегирована**"
-    label_model:           "• Модель: `{model}`"
+    label_model:           "• Настроенная модель: `{model}`"
     label_goal:            "• Цель: {goal}"
 
   branch:

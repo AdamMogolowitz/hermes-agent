@@ -69,7 +69,7 @@ gateway:
   delegated:
     start_header:          "🚀 **Taak gedelegeer**"
     start_header_indexed:  "🚀 **[{index}] Taak gedelegeer**"
-    label_model:           "• Model: `{model}`"
+    label_model:           "• Geconfigureerde model: `{model}`"
     label_goal:            "• Doel: {goal}"
 
   branch:

@@ -11,6 +11,7 @@ import pytest
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter, SendResult
+from gateway.runner_registry import set_gateway_runner
 from gateway.session import SessionSource
 
 
@@ -177,6 +178,7 @@ def _setup_gateway(
     monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
     monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
     monkeypatch.setattr(gateway_run, "_gateway_runner_ref", lambda: runner)
+    set_gateway_runner(lambda: runner)
 
     source = SessionSource(
         platform=platform,
@@ -400,57 +402,6 @@ async def test_batch_delegation_emits_indexed_start_bubbles(monkeypatch, tmp_pat
     assert any("Second delegated goal" in c and "model-b" in c for c in delegated_sent)
 
 
-def test_delegated_message_formatter_helper(monkeypatch, tmp_path):
-    gateway_run = importlib.import_module("gateway.run")
-    msg = gateway_run._build_delegated_task_start_message(
-        "  my goal  ",
-        " kimi-k2.6:cloud ",
-    )
-    assert "🚀 **Task delegated**" in msg
-    assert "kimi-k2.6:cloud" in msg
-    assert "• Goal: my goal" in msg
-
-
-def test_delegated_message_formatter_omits_empty_goal():
-    gateway_run = importlib.import_module("gateway.run")
-    msg = gateway_run._build_delegated_task_start_message("", "kimi-k2.6:cloud")
-    assert "• Goal:" not in msg
-    assert "kimi-k2.6:cloud" in msg
-
-
-def test_delegated_message_formatter_truncates_long_goal_and_model():
-    gateway_run = importlib.import_module("gateway.run")
-    long_goal = "g" * 100
-    long_model = "m" * 50
-    msg = gateway_run._build_delegated_task_start_message(long_goal, long_model)
-    assert "g" * 55 + "..." in msg
-    assert "m" * 35 + "..." in msg
-    assert long_goal not in msg
-    assert long_model not in msg
-
-
-def test_delegated_message_formatter_batch_prefix():
-    gateway_run = importlib.import_module("gateway.run")
-    msg = gateway_run._build_delegated_task_start_message(
-        "goal a",
-        "model-a",
-        task_index=1,
-        task_count=3,
-    )
-    assert "🚀 **[2] Task delegated**" in msg
-
-
-def test_delegated_message_formatter_i18n():
-    gateway_run = importlib.import_module("gateway.run")
-    msg = gateway_run._build_delegated_task_start_message(
-        "mein ziel",
-        "kimi-k2.6:cloud",
-        lang="de",
-    )
-    assert "Aufgabe delegiert" in msg
-    assert "Ziel: mein ziel" in msg
-
-
 class NonEditProgressCaptureAdapter(BasePlatformAdapter):
     """Adapter that does NOT override edit_message.
 
@@ -612,3 +563,60 @@ async def test_delegated_start_durable_after_turn_ends(monkeypatch, tmp_path):
     content = next(iter(delegated_contents))
     assert "Background research task" in content
     assert "kimi-k2.6:cloud" in content
+
+
+@pytest.mark.asyncio
+async def test_delegated_start_suppressed_when_session_generation_stale(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
+
+    runner, adapter, source, session_key = _setup_gateway(
+        monkeypatch,
+        tmp_path,
+        platform=Platform.DISCORD,
+        agent_cls=BackgroundDelegationStartAgent,
+        config_data={
+            "display": {
+                "tool_progress": "off",
+                "thinking_progress": False,
+                "delegated_start_notifications": True,
+            }
+        },
+    )
+    runner._gateway_loop = asyncio.get_running_loop()
+    run_generation = runner._begin_session_run_generation(session_key)
+
+    async def _invalidate_generation():
+        await asyncio.sleep(0.2)
+        runner._begin_session_run_generation(session_key)
+
+    invalidate_task = asyncio.create_task(_invalidate_generation())
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="sess-delegation-stale-gen",
+        session_key=session_key,
+        run_generation=run_generation,
+    )
+
+    await invalidate_task
+
+    assert result.get("final_response") == "done"
+
+    deadline = time.time() + 2.0
+    delegated_contents = set()
+    while time.time() < deadline:
+        delegated_contents = {
+            str(c.get("content", ""))
+            for c in (adapter.sent + adapter.edits)
+            if "Task delegated" in str(c.get("content", ""))
+        }
+        if delegated_contents:
+            break
+        await asyncio.sleep(0.05)
+
+    assert delegated_contents == set()

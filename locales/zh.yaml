@@ -69,7 +69,7 @@ gateway:
   delegated:
     start_header:          "🚀 **任务已委派**"
     start_header_indexed:  "🚀 **[{index}] 任务已委派**"
-    label_model:           "• 模型：`{model}`"
+    label_model:           "• 配置的模型：`{model}`"
     label_goal:            "• 目标：{goal}"
 
   branch:

@@ -1222,8 +1222,8 @@ class APIServerAdapter(BasePlatformAdapter):
         if not session_key:
             return None
         try:
-            from gateway.run import _gateway_runner_ref
-            runner = _gateway_runner_ref()
+            from gateway.runner_registry import get_gateway_runner
+            runner = get_gateway_runner()
             if runner is None:
                 return None
             override = runner._session_model_overrides.get(session_key)

@@ -69,7 +69,7 @@ gateway:
   delegated:
     start_header:          "🚀 **タスクを委任しました**"
     start_header_indexed:  "🚀 **[{index}] タスクを委任しました**"
-    label_model:           "• モデル: `{model}`"
+    label_model:           "• 設定モデル: `{model}`"
     label_goal:            "• 目的: {goal}"
 
   branch:

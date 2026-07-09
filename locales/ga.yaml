@@ -73,7 +73,7 @@ gateway:
   delegated:
     start_header:          "🚀 **Tasc delegáilte**"
     start_header_indexed:  "🚀 **[{index}] Tasc delegáilte**"
-    label_model:           "• Samhail: `{model}`"
+    label_model:           "• Samhail chumraithe: `{model}`"
     label_goal:            "• Sprioc: {goal}"
 
   branch:

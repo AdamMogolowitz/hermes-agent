@@ -295,7 +295,7 @@ Primary event types the client handles today:
 | `voice.status`             | `{ state }`                                                                 |
 | `voice.transcript`         | `{ text, no_speech_limit? }`                                                |
 | `subagent.spawn_requested` | `{ subagent_id?, task_index, goal?, depth?, parent_id? }`                   |
-| `subagent.start`           | `{ subagent_id?, task_index, goal?, depth?, parent_id? }`                   |
+| `subagent.start`           | `{ subagent_id?, task_index, goal?, model?, depth?, parent_id? }`                   |
 | `subagent.thinking`        | `{ text }`                                                                  |
 | `subagent.tool`            | `{ tool_name?, tool_preview?, text? }`                                      |
 | `subagent.progress`        | `{ text }`                                                                  |

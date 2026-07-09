@@ -69,7 +69,7 @@ gateway:
   delegated:
     start_header:          "🚀 **Görev devredildi**"
     start_header_indexed:  "🚀 **[{index}] Görev devredildi**"
-    label_model:           "• Model: `{model}`"
+    label_model:           "• Yapılandırılmış model: `{model}`"
     label_goal:            "• Hedef: {goal}"
 
   branch:

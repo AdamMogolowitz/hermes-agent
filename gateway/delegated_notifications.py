@@ -12,7 +12,14 @@ from agent.delegation_display import (
     truncate_delegated_label,
 )
 from agent.i18n import t
-from gateway.config import Platform
+from gateway.display_config import resolve_display_setting
+from gateway.platform_utils import (
+    GATEWAY_RAW_TEXT_PLATFORMS,
+    gateway_surface_passes_raw_text,
+    non_conversational_metadata,
+    platform_uses_thread_reply,
+)
+from gateway.runner_registry import get_gateway_runner
 from utils import is_truthy_value
 
 if TYPE_CHECKING:
@@ -20,39 +27,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Surfaces that consume gateway text programmatically (CLI/TUI local
-# diagnostics, API JSON, webhook payloads) and must keep raw text.
-GATEWAY_RAW_TEXT_PLATFORMS = frozenset(
-    {"local", "api_server", "webhook", "msgraph_webhook"}
-)
-
-
-def gateway_platform_value(platform: Any) -> str:
-    """Return a normalized gateway platform value for enums or raw strings."""
-    return str(getattr(platform, "value", platform) or "").strip().lower()
-
-
-def gateway_surface_passes_raw_text(platform: Any) -> bool:
-    """True only for programmatic/local surfaces that must keep raw text."""
-    return gateway_platform_value(platform) in GATEWAY_RAW_TEXT_PLATFORMS
-
 
 def should_emit_delegated_task_start(platform: Any) -> bool:
     """True for chat platforms that should receive delegated-start bubbles."""
     return not gateway_surface_passes_raw_text(platform)
-
-
-def _non_conversational_metadata(
-    metadata: dict[str, Any] | None = None,
-    *,
-    platform: Any = None,
-) -> dict[str, Any] | None:
-    """Mark Discord lifecycle/status sends without changing other platforms."""
-    if gateway_platform_value(platform) != "discord":
-        return metadata
-    merged = dict(metadata or {})
-    merged["non_conversational"] = True
-    return merged
 
 
 def build_delegated_task_start_message(
@@ -94,8 +72,6 @@ def build_delegated_task_start_message(
 
 def delegated_start_enabled(user_config: dict, platform_key: str) -> bool:
     """True when delegated-subagent start notifications are enabled."""
-    from gateway.display_config import resolve_display_setting
-
     value = resolve_display_setting(
         user_config,
         platform_key,
@@ -110,6 +86,8 @@ def schedule_delegated_start_notice(
     source: SessionSource,
     message: str,
     reply_to: str | None = None,
+    session_key: str | None = None,
+    run_generation: int | None = None,
 ) -> None:
     """Schedule a one-shot delegated-start bubble on the gateway loop.
 
@@ -117,16 +95,26 @@ def schedule_delegated_start_notice(
     ``delegate_task(background=true)``) and the per-turn progress sender
     task has already been cancelled.
     """
-    from gateway.run import _gateway_runner_ref
-
-    runner = _gateway_runner_ref()
+    runner = get_gateway_runner()
     if runner is None:
         return
     loop = getattr(runner, "_gateway_loop", None)
     if loop is None or loop.is_closed():
+        logger.warning(
+            "delegated start notice dropped: gateway loop unavailable "
+            "(platform=%s)",
+            getattr(getattr(source, "platform", None), "value", source.platform),
+        )
         return
     safe_schedule_threadsafe(
-        deliver_delegated_start_notice(runner, source, message, reply_to=reply_to),
+        deliver_delegated_start_notice(
+            runner,
+            source,
+            message,
+            reply_to=reply_to,
+            session_key=session_key,
+            run_generation=run_generation,
+        ),
         loop,
         logger=logger,
         log_message="delegated start notice scheduling error",
@@ -139,18 +127,32 @@ async def deliver_delegated_start_notice(
     message: str,
     *,
     reply_to: str | None = None,
+    session_key: str | None = None,
+    run_generation: int | None = None,
 ) -> None:
     """Send a delegated-subagent start bubble outside the per-turn progress sender."""
     if not should_emit_delegated_task_start(source.platform):
+        return
+    if (
+        session_key
+        and run_generation is not None
+        and not runner._is_session_run_current(session_key, run_generation)
+    ):
+        logger.debug(
+            "delegated start notice dropped: stale session generation "
+            "(session_key=%s generation=%s)",
+            session_key,
+            run_generation,
+        )
         return
     adapter = runner._adapter_for_source(source)
     if not adapter or not source.chat_id:
         return
     thread_meta = runner._thread_metadata_for_source(source, reply_to)
-    metadata = _non_conversational_metadata(thread_meta, platform=source.platform)
+    metadata = non_conversational_metadata(thread_meta, platform=source.platform)
     progress_reply_to = (
         reply_to
-        if source.platform in (Platform.FEISHU, Platform.MATTERMOST)
+        if platform_uses_thread_reply(source.platform)
         and source.thread_id
         and reply_to
         else None

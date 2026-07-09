@@ -58,6 +58,19 @@ from agent.conversation_loop import INTERRUPT_WAITING_FOR_MODEL_PREFIX
 from agent.i18n import t
 from hermes_cli.config import cfg_get
 from hermes_cli.fallback_config import get_fallback_chain
+from gateway.delegated_notifications import (
+    build_delegated_task_start_message as _build_delegated_task_start_message,
+    delegated_start_enabled as _delegated_start_enabled,
+    schedule_delegated_start_notice,
+    should_emit_delegated_task_start as _should_emit_delegated_task_start,
+)
+from gateway.platform_utils import (
+    GATEWAY_RAW_TEXT_PLATFORMS as _GATEWAY_RAW_TEXT_PLATFORMS,
+    gateway_platform_value as _gateway_platform_value,
+    gateway_surface_passes_raw_text as _gateway_surface_passes_raw_text,
+    non_conversational_metadata as _non_conversational_metadata,
+)
+from gateway.runner_registry import set_gateway_runner
 
 # --- Agent cache tuning ---------------------------------------------------
 # Bounds the per-session AIAgent cache to prevent unbounded growth in
@@ -90,23 +103,6 @@ _TELEGRAM_NOISY_STATUS_RE = re.compile(
     r")",
     re.IGNORECASE | re.DOTALL,
 )
-
-# Surfaces that consume gateway text programmatically (CLI/TUI "local"
-# diagnostics, API JSON, webhook payloads) and therefore must keep RAW
-# status/error text. EVERY other platform is a human-facing chat surface
-# where operational lifecycle/provider-error noise (and any secrets in it)
-# must be suppressed or sanitized. Widens #28533's Telegram-only filter to
-# all chat gateways (#39293). Fail-closed: unknown/empty platform -> chat.
-from gateway.delegated_notifications import (
-    GATEWAY_RAW_TEXT_PLATFORMS as _GATEWAY_RAW_TEXT_PLATFORMS,
-    build_delegated_task_start_message as _build_delegated_task_start_message,
-    delegated_start_enabled as _delegated_start_enabled,
-    deliver_delegated_start_notice,
-    gateway_surface_passes_raw_text as _gateway_surface_passes_raw_text,
-    schedule_delegated_start_notice,
-    should_emit_delegated_task_start as _should_emit_delegated_task_start,
-)
-
 
 _GATEWAY_PROVIDER_ERROR_RE = re.compile(
     r"("  # infrastructure/provider error preambles, not ordinary assistant prose
@@ -210,24 +206,6 @@ def _ensure_windows_gateway_venv_imports() -> None:
             pythonpath.append(os.environ["PYTHONPATH"])
         os.environ["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(pythonpath))
         return
-
-
-def _gateway_platform_value(platform: Any) -> str:
-    """Return a normalized gateway platform value for enums or raw strings."""
-    return str(getattr(platform, "value", platform) or "").strip().lower()
-
-
-def _non_conversational_metadata(
-    metadata: Optional[Dict[str, Any]] = None,
-    *,
-    platform: Any = None,
-) -> Optional[Dict[str, Any]]:
-    """Mark Discord lifecycle/status sends without changing other platforms."""
-    if _gateway_platform_value(platform) != "discord":
-        return metadata
-    merged = dict(metadata or {})
-    merged["non_conversational"] = True
-    return merged
 
 
 def _is_transient_network_error(exc: BaseException) -> bool:
@@ -2822,6 +2800,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         self._profile_adapters: Dict[str, Dict[Platform, BasePlatformAdapter]] = {}
         self._warn_if_docker_media_delivery_is_risky()
         _gateway_runner_ref = _weakref.ref(self)
+        set_gateway_runner(_gateway_runner_ref)
 
         # Load ephemeral config from config.yaml / env vars.
         # Both are injected at API-call time only and never persisted.
@@ -15174,18 +15153,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             user_name=str(evt.get("user_name") or "").strip() or None,
         )
 
-    async def _deliver_delegated_start_notice(
-        self,
-        source: "SessionSource",
-        message: str,
-        *,
-        reply_to: str | None = None,
-    ) -> None:
-        """Send a delegated-subagent start bubble outside the per-turn progress sender."""
-        await deliver_delegated_start_notice(
-            self, source, message, reply_to=reply_to
-        )
-
     async def _inject_watch_notification(self, synth_text: str, evt: dict) -> None:
         """Inject a watch-pattern notification as a synthetic message event.
 
@@ -17031,6 +16998,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 try:
                     _goal = str(preview or kwargs.get("goal") or "").strip()
                     _model = str(kwargs.get("model") or "").strip()
+                    if not _goal and not _model:
+                        return
                     _task_index = int(kwargs.get("task_index") or 0)
                     _task_count = int(kwargs.get("task_count") or 1)
                     msg = _build_delegated_task_start_message(
@@ -17043,6 +17012,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         source=source,
                         message=msg,
                         reply_to=event_message_id,
+                        session_key=session_key,
+                        run_generation=run_generation,
                     )
                 except Exception as _subagent_start_err:
                     logger.debug("subagent.start relay failed: %s", _subagent_start_err)

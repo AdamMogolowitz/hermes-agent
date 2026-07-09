@@ -1516,7 +1516,7 @@ Signal is listed as a valid platform key because the setting can be saved per pl
 
 `interim_assistant_messages` is gateway-only. When enabled, Hermes sends completed mid-turn assistant updates as separate chat messages. This is independent from `tool_progress` and does not require gateway streaming.
 
-`delegated_start_notifications` is gateway-only. When enabled, Hermes sends a one-shot bubble when `delegate_task` starts a subagent, showing the resolved model and goal. This is independent from `tool_progress` — you can keep tool breadcrumbs off (`tool_progress: off`) while still seeing which model a delegation picked, or disable both with `delegated_start_notifications: false`. Per-platform override: `display.platforms.<platform>.delegated_start_notifications`.
+`delegated_start_notifications` is gateway-only. When enabled (default **on** for all messaging platforms), Hermes sends a one-shot bubble when `delegate_task` starts a subagent, showing the **configured** model name at spawn time and the goal. This is independent from `tool_progress` — you can keep tool breadcrumbs off (`tool_progress: off`) while still seeing which model a delegation picked, or disable bubbles globally with `delegated_start_notifications: false`. Per-platform opt-out: `display.platforms.<platform>.delegated_start_notifications: false`. Programmatic surfaces (`local`, `api_server`, `webhook`) never receive these bubbles. The configured model label reflects the child agent's model at spawn, not runtime fallback after the first API call.
 
 ## Privacy
 
