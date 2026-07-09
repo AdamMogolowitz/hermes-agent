@@ -5,10 +5,12 @@ import pytest
 from gateway.config import Platform
 from gateway.delegated_notifications import (
     build_delegated_task_start_message,
-    gateway_surface_passes_raw_text,
     should_emit_delegated_task_start,
 )
-from gateway.platform_utils import GATEWAY_RAW_TEXT_PLATFORMS
+from gateway.platform_utils import (
+    GATEWAY_RAW_TEXT_PLATFORMS,
+    gateway_surface_passes_raw_text,
+)
 
 
 @pytest.mark.parametrize(
@@ -45,10 +47,9 @@ def test_gateway_surface_passes_raw_text(platform, expected):
     assert gateway_surface_passes_raw_text(platform) is expected
 
 
-def test_gateway_raw_text_platforms_set():
-    assert GATEWAY_RAW_TEXT_PLATFORMS == frozenset(
-        {"local", "api_server", "webhook", "msgraph_webhook"}
-    )
+@pytest.mark.parametrize("platform", sorted(GATEWAY_RAW_TEXT_PLATFORMS))
+def test_raw_text_platforms_never_emit_delegated_start(platform):
+    assert should_emit_delegated_task_start(platform) is False
 
 
 def test_build_delegated_task_start_message_helper():
@@ -56,6 +57,7 @@ def test_build_delegated_task_start_message_helper():
         "  my goal  ",
         " kimi-k2.6:cloud ",
     )
+    assert msg is not None
     assert "🚀 **Task delegated**" in msg
     assert "kimi-k2.6:cloud" in msg
     assert "Configured model" in msg
@@ -64,14 +66,21 @@ def test_build_delegated_task_start_message_helper():
 
 def test_build_delegated_task_start_message_omits_empty_goal():
     msg = build_delegated_task_start_message("", "kimi-k2.6:cloud")
+    assert msg is not None
     assert "• Goal:" not in msg
     assert "kimi-k2.6:cloud" in msg
+
+
+def test_build_delegated_task_start_message_returns_none_when_both_empty():
+    assert build_delegated_task_start_message("", "") is None
+    assert build_delegated_task_start_message("   ", "  ") is None
 
 
 def test_build_delegated_task_start_message_truncates_long_goal_and_model():
     long_goal = "g" * 100
     long_model = "m" * 50
     msg = build_delegated_task_start_message(long_goal, long_model)
+    assert msg is not None
     assert "g" * 55 + "..." in msg
     assert "m" * 35 + "..." in msg
     assert long_goal not in msg
@@ -85,6 +94,7 @@ def test_build_delegated_task_start_message_batch_prefix():
         task_index=1,
         task_count=3,
     )
+    assert msg is not None
     assert "🚀 **[2] Task delegated**" in msg
 
 
@@ -94,5 +104,6 @@ def test_build_delegated_task_start_message_i18n():
         "kimi-k2.6:cloud",
         lang="de",
     )
+    assert msg is not None
     assert "Aufgabe delegiert" in msg
     assert "Ziel: mein ziel" in msg

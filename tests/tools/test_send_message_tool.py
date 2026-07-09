@@ -1041,7 +1041,7 @@ class TestMatrixMediaLiveAdapterReuse:
         )
 
         with patch(
-            "gateway.run._gateway_runner_ref",
+            "gateway.runner_registry.get_gateway_runner",
             return_value=fake_runner,
         ), patch.dict(
             sys.modules, {"plugins.platforms.matrix.adapter": SimpleNamespace()}
@@ -1064,7 +1064,7 @@ class TestMatrixMediaLiveAdapterReuse:
         ]
 
     def test_live_adapter_not_available_falls_back_to_ephemeral(self, tmp_path):
-        """When _gateway_runner_ref returns None, the ephemeral adapter
+        """When get_gateway_runner returns None, the ephemeral adapter
         path (connect + disconnect) is used as before."""
         doc_path = tmp_path / "doc.pdf"
         doc_path.write_bytes(b"%PDF-1.4")
@@ -1093,7 +1093,7 @@ class TestMatrixMediaLiveAdapterReuse:
         fake_module = SimpleNamespace(MatrixAdapter=EphemeralAdapter)
 
         with patch(
-            "gateway.run._gateway_runner_ref", return_value=None
+            "gateway.runner_registry.get_gateway_runner", return_value=None
         ), patch.dict(sys.modules, {"plugins.platforms.matrix.adapter": fake_module}):
             result = asyncio.run(
                 _send_matrix_via_adapter(
@@ -1137,7 +1137,7 @@ class TestMatrixMediaLiveAdapterReuse:
         fake_module = SimpleNamespace(MatrixAdapter=EphemeralAdapter)
 
         with patch(
-            "gateway.run._gateway_runner_ref",
+            "gateway.runner_registry.get_gateway_runner",
             return_value=fake_runner,
         ), patch.dict(sys.modules, {"plugins.platforms.matrix.adapter": fake_module}):
             result = asyncio.run(
@@ -3021,9 +3021,9 @@ class TestSendViaAdapterStandaloneFallback:
                 return SimpleNamespace(success=True, message_id="ntfy-id")
 
         runner = SimpleNamespace(adapters={platform: Adapter()})
-        fake_gateway_run = ModuleType("gateway.run")
-        fake_gateway_run._gateway_runner_ref = lambda: runner
-        monkeypatch.setitem(sys.modules, "gateway.run", fake_gateway_run)
+        monkeypatch.setattr(
+            "gateway.runner_registry.get_gateway_runner", lambda: runner
+        )
 
         result = await _send_via_adapter(
             platform,
@@ -3054,7 +3054,7 @@ class TestSendViaAdapterStandaloneFallback:
 
         platform_registry.register(self._make_entry(fake_send))
         try:
-            monkeypatch.setattr("gateway.run._gateway_runner_ref", lambda: None)
+            monkeypatch.setattr("gateway.runner_registry.get_gateway_runner", lambda: None)
 
             pconfig = SimpleNamespace(extra={})
             result = await _send_via_adapter(
@@ -3088,7 +3088,7 @@ class TestSendViaAdapterStandaloneFallback:
 
         platform_registry.register(self._make_entry(fake_send))
         try:
-            monkeypatch.setattr("gateway.run._gateway_runner_ref", lambda: None)
+            monkeypatch.setattr("gateway.runner_registry.get_gateway_runner", lambda: None)
 
             await _send_via_adapter(
                 _FakePlatform("fakeplatform"),
@@ -3115,7 +3115,7 @@ class TestSendViaAdapterStandaloneFallback:
 
         platform_registry.register(self._make_entry(None))
         try:
-            monkeypatch.setattr("gateway.run._gateway_runner_ref", lambda: None)
+            monkeypatch.setattr("gateway.runner_registry.get_gateway_runner", lambda: None)
 
             result = await _send_via_adapter(
                 _FakePlatform("fakeplatform"),
@@ -3141,7 +3141,7 @@ class TestSendViaAdapterStandaloneFallback:
 
         platform_registry.register(self._make_entry(boom))
         try:
-            monkeypatch.setattr("gateway.run._gateway_runner_ref", lambda: None)
+            monkeypatch.setattr("gateway.runner_registry.get_gateway_runner", lambda: None)
 
             result = await _send_via_adapter(
                 _FakePlatform("fakeplatform"),
@@ -3165,7 +3165,7 @@ class TestSendViaAdapterStandaloneFallback:
 
         platform_registry.register(self._make_entry(fake_send))
         try:
-            monkeypatch.setattr("gateway.run._gateway_runner_ref", lambda: None)
+            monkeypatch.setattr("gateway.runner_registry.get_gateway_runner", lambda: None)
 
             result = await _send_via_adapter(
                 _FakePlatform("fakeplatform"),

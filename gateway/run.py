@@ -59,8 +59,8 @@ from agent.i18n import t
 from hermes_cli.config import cfg_get
 from hermes_cli.fallback_config import get_fallback_chain
 from gateway.delegated_notifications import (
-    build_delegated_task_start_message as _build_delegated_task_start_message,
     delegated_start_enabled as _delegated_start_enabled,
+    handle_subagent_start_event,
     schedule_delegated_start_notice,
     should_emit_delegated_task_start as _should_emit_delegated_task_start,
 )
@@ -70,7 +70,7 @@ from gateway.platform_utils import (
     gateway_surface_passes_raw_text as _gateway_surface_passes_raw_text,
     non_conversational_metadata as _non_conversational_metadata,
 )
-from gateway.runner_registry import set_gateway_runner
+from gateway.runner_registry import get_gateway_runner, set_gateway_runner
 
 # --- Agent cache tuning ---------------------------------------------------
 # Bounds the per-session AIAgent cache to prevent unbounded growth in
@@ -2556,9 +2556,13 @@ def _drain_gateway_watch_events(completion_queue) -> "list[dict]":
 
 # Module-level weak reference to the active GatewayRunner instance.
 # Used by tools (e.g. send_message) that need to route through a live
-# adapter for plugin platforms.  Set in GatewayRunner.__init__().
+# adapter for plugin platforms.  Canonical storage is runner_registry;
+# this shim preserves the historical import path.
 import weakref as _weakref
-_gateway_runner_ref: _weakref.ref = lambda: None
+
+
+def _gateway_runner_ref():
+    return get_gateway_runner()
 
 
 def _normalize_empty_agent_response(
@@ -2780,7 +2784,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
     _startup_restore_in_progress: bool = False
 
     def __init__(self, config: Optional[GatewayConfig] = None):
-        global _gateway_runner_ref
         self.config = config or load_gateway_config()
         # Mark the process as a profile multiplexer when configured. This flips
         # agent.secret_scope.get_secret() to fail-closed on any unscoped
@@ -2799,8 +2802,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Populated by _start_secondary_profile_adapters().
         self._profile_adapters: Dict[str, Dict[Platform, BasePlatformAdapter]] = {}
         self._warn_if_docker_media_delivery_is_risky()
-        _gateway_runner_ref = _weakref.ref(self)
-        set_gateway_runner(_gateway_runner_ref)
+        set_gateway_runner(_weakref.ref(self))
 
         # Load ephemeral config from config.yaml / env vars.
         # Both are injected at API-call time only and never persisted.
@@ -16990,33 +16992,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # selected for the child subagent (start-phase only, not completion).
             # Must run before log-mode early-return and _run_still_current()
             # so tool_progress:log and background delegate_task still notify.
-            if event_type == "subagent.start" and _should_emit_delegated_task_start(
-                source.platform
-            ):
-                if not _delegated_start_enabled(user_config, platform_key):
-                    return
-                try:
-                    _goal = str(preview or kwargs.get("goal") or "").strip()
-                    _model = str(kwargs.get("model") or "").strip()
-                    if not _goal and not _model:
-                        return
-                    _task_index = int(kwargs.get("task_index") or 0)
-                    _task_count = int(kwargs.get("task_count") or 1)
-                    msg = _build_delegated_task_start_message(
-                        _goal,
-                        _model,
-                        task_index=_task_index,
-                        task_count=_task_count,
-                    )
-                    schedule_delegated_start_notice(
-                        source=source,
-                        message=msg,
-                        reply_to=event_message_id,
-                        session_key=session_key,
-                        run_generation=run_generation,
-                    )
-                except Exception as _subagent_start_err:
-                    logger.debug("subagent.start relay failed: %s", _subagent_start_err)
+            if event_type == "subagent.start":
+                handle_subagent_start_event(
+                    source=source,
+                    user_config=user_config,
+                    platform_key=platform_key,
+                    preview=preview,
+                    kwargs=kwargs,
+                    event_message_id=event_message_id,
+                    session_key=session_key,
+                    run_generation=run_generation,
+                )
                 return
 
             # "log" mode: append tool.started lines to the log queue and stay

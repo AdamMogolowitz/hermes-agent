@@ -113,6 +113,18 @@ class DelegationStartAgent:
         }
 
 
+class InterruptedDelegationStartAgent(DelegationStartAgent):
+    """Simulates /stop during an in-flight turn before subagent.start delivers."""
+
+    def run_conversation(self, message, conversation_history=None, task_id=None):
+        import time
+
+        # Let track_agent() promote this instance into _running_agents first.
+        time.sleep(0.15)
+        self.is_interrupted = True
+        return super().run_conversation(message, conversation_history, task_id)
+
+
 class BatchDelegationStartAgent:
     def __init__(self, **kwargs):
         self.tool_progress_callback = kwargs.get("tool_progress_callback")
@@ -177,7 +189,6 @@ def _setup_gateway(
     gateway_run = importlib.import_module("gateway.run")
     monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
     monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
-    monkeypatch.setattr(gateway_run, "_gateway_runner_ref", lambda: runner)
     set_gateway_runner(lambda: runner)
 
     source = SessionSource(
@@ -563,6 +574,41 @@ async def test_delegated_start_durable_after_turn_ends(monkeypatch, tmp_path):
     content = next(iter(delegated_contents))
     assert "Background research task" in content
     assert "kimi-k2.6:cloud" in content
+
+
+@pytest.mark.asyncio
+async def test_delegated_start_suppressed_when_session_interrupted(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "off")
+
+    runner, adapter, source, session_key = _setup_gateway(
+        monkeypatch,
+        tmp_path,
+        platform=Platform.DISCORD,
+        agent_cls=InterruptedDelegationStartAgent,
+        config_data={
+            "display": {
+                "tool_progress": "off",
+                "thinking_progress": False,
+                "delegated_start_notifications": True,
+            }
+        },
+    )
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="sess-delegation-interrupted",
+        session_key=session_key,
+    )
+
+    assert result.get("final_response") == "done"
+
+    delegated_sent = _delegated_sent_contents(adapter)
+    assert delegated_sent == []
 
 
 @pytest.mark.asyncio

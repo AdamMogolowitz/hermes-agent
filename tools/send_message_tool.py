@@ -261,8 +261,8 @@ def _handle_react(args, remove=False):
 
     runner = None
     try:
-        from gateway.run import _gateway_runner_ref
-        runner = _gateway_runner_ref()
+        from gateway.runner_registry import get_gateway_runner
+        runner = get_gateway_runner()
     except Exception:
         runner = None
     adapter = runner.adapters.get(platform) if runner is not None else None
@@ -639,7 +639,7 @@ async def _send_via_adapter(
     for out-of-process callers (e.g. cron running separately from the gateway).
 
     Order of attempts:
-      1. Live in-process adapter via ``_gateway_runner_ref()`` (the path that
+      1. Live in-process adapter via ``get_gateway_runner()`` (the path that
          existed before this change).
       2. The plugin's ``standalone_sender_fn`` registered on its
          ``PlatformEntry`` (used when the gateway is not in this process, so
@@ -649,8 +649,8 @@ async def _send_via_adapter(
     platform_name = platform.value if hasattr(platform, "value") else str(platform)
     runner = None
     try:
-        from gateway.run import _gateway_runner_ref
-        runner = _gateway_runner_ref()
+        from gateway.runner_registry import get_gateway_runner
+        runner = get_gateway_runner()
     except Exception:
         runner = None
 
@@ -1505,8 +1505,8 @@ async def _send_matrix_via_adapter(pconfig, chat_id, message, media_files=None, 
     live_adapter = None
     runner = None
     try:
-        from gateway.run import _gateway_runner_ref
-        runner = _gateway_runner_ref()
+        from gateway.runner_registry import get_gateway_runner
+        runner = get_gateway_runner()
     except Exception:
         runner = None
     if runner is not None:

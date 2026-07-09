@@ -4069,7 +4069,9 @@ class TestModelRoutesAgentCreation:
         class FakeRunner:
             _session_model_overrides = {"chan-1": {"model": "user/model"}}
 
-        monkeypatch.setattr("gateway.run._gateway_runner_ref", lambda: FakeRunner())
+        monkeypatch.setattr(
+            "gateway.runner_registry.get_gateway_runner", lambda: FakeRunner()
+        )
         assert adapter._session_model_override_for("chan-1") == {"model": "user/model"}
         assert adapter._session_model_override_for("chan-2") is None
         assert adapter._session_model_override_for(None) is None

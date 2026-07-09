@@ -14,7 +14,6 @@ from agent.delegation_display import (
 from agent.i18n import t
 from gateway.display_config import resolve_display_setting
 from gateway.platform_utils import (
-    GATEWAY_RAW_TEXT_PLATFORMS,
     gateway_surface_passes_raw_text,
     non_conversational_metadata,
     platform_uses_thread_reply,
@@ -40,10 +39,11 @@ def build_delegated_task_start_message(
     task_index: int = 0,
     task_count: int = 1,
     lang: str | None = None,
-) -> str:
+) -> str | None:
     """Format a one-shot delegated task start notification.
 
     Cache-safe + side-effect free: used by the gateway progress callback.
+    Returns None when both goal and model are empty after normalization.
     """
 
     def _tr(key: str, **kwargs) -> str:
@@ -53,6 +53,9 @@ def build_delegated_task_start_message(
 
     _goal = truncate_delegated_label(goal, DELEGATED_GOAL_PREVIEW_MAX)
     _model = truncate_delegated_label(model, DELEGATED_MODEL_PREVIEW_MAX)
+
+    if not _goal and not _model:
+        return None
 
     if int(task_count) > 1:
         header = _tr(
@@ -79,6 +82,49 @@ def delegated_start_enabled(user_config: dict, platform_key: str) -> bool:
         fallback=True,
     )
     return is_truthy_value(value, default=True)
+
+
+def handle_subagent_start_event(
+    *,
+    source: SessionSource,
+    user_config: dict,
+    platform_key: str,
+    preview: str | None,
+    kwargs: dict | None,
+    event_message_id: str | None,
+    session_key: str | None,
+    run_generation: int | None,
+) -> None:
+    """Gate, build, and schedule a delegated-subagent start bubble."""
+    if not should_emit_delegated_task_start(source.platform):
+        return
+    if not delegated_start_enabled(user_config, platform_key):
+        return
+    try:
+        _kwargs = kwargs or {}
+        _goal = str(preview or _kwargs.get("goal") or "").strip()
+        _model = str(_kwargs.get("model") or "").strip()
+        if not _goal and not _model:
+            return
+        _task_index = int(_kwargs.get("task_index") or 0)
+        _task_count = int(_kwargs.get("task_count") or 1)
+        msg = build_delegated_task_start_message(
+            _goal,
+            _model,
+            task_index=_task_index,
+            task_count=_task_count,
+        )
+        if not msg:
+            return
+        schedule_delegated_start_notice(
+            source=source,
+            message=msg,
+            reply_to=event_message_id,
+            session_key=session_key,
+            run_generation=run_generation,
+        )
+    except Exception as exc:
+        logger.debug("subagent.start relay failed: %s", exc)
 
 
 def schedule_delegated_start_notice(
@@ -133,6 +179,12 @@ async def deliver_delegated_start_notice(
     """Send a delegated-subagent start bubble outside the per-turn progress sender."""
     if not should_emit_delegated_task_start(source.platform):
         return
+    if session_key and run_generation is None:
+        logger.debug(
+            "delegated start notice: session_key without run_generation "
+            "(session_key=%s) — stale guard skipped",
+            session_key,
+        )
     if (
         session_key
         and run_generation is not None
@@ -145,6 +197,15 @@ async def deliver_delegated_start_notice(
             run_generation,
         )
         return
+    if session_key:
+        running = runner._running_agents.get(session_key)
+        if running is not None and getattr(running, "is_interrupted", False):
+            logger.debug(
+                "delegated start notice dropped: session interrupted "
+                "(session_key=%s)",
+                session_key,
+            )
+            return
     adapter = runner._adapter_for_source(source)
     if not adapter or not source.chat_id:
         return
