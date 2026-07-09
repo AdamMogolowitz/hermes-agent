@@ -16,40 +16,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import BasePlatformAdapter, SendResult
+from gateway.config import Platform
 from gateway.session import SessionSource
-
-
-class ProgressCaptureAdapter(BasePlatformAdapter):
-    def __init__(self, platform=Platform.TELEGRAM):
-        super().__init__(PlatformConfig(enabled=True, token="***"), platform)
-        self.sent = []
-        self.edits = []
-        self.typing = []
-
-    async def connect(self, *, is_reconnect: bool = False) -> bool:
-        return True
-
-    async def disconnect(self) -> None:
-        return None
-
-    async def send(self, chat_id, content, reply_to=None, metadata=None) -> SendResult:
-        self.sent.append({"chat_id": chat_id, "content": content})
-        return SendResult(success=True, message_id="progress-1")
-
-    async def edit_message(self, chat_id, message_id, content) -> SendResult:
-        self.edits.append({"message_id": message_id, "content": content})
-        return SendResult(success=True, message_id=message_id)
-
-    async def send_typing(self, chat_id, metadata=None) -> None:
-        self.typing.append(chat_id)
-
-    async def stop_typing(self, chat_id) -> None:
-        return None
-
-    async def get_chat_info(self, chat_id: str):
-        return {"id": chat_id}
+from tests.gateway.progress_fixtures import ProgressCaptureAdapter, make_progress_runner
 
 
 class PreInterruptAgent:
@@ -129,30 +98,6 @@ class PartialTruncationAgent:
         }
 
 
-def _make_runner(adapter):
-    gateway_run = importlib.import_module("gateway.run")
-    GatewayRunner = gateway_run.GatewayRunner
-
-    runner = object.__new__(GatewayRunner)
-    runner.adapters = {adapter.platform: adapter}
-    runner._voice_mode = {}
-    runner._prefill_messages = []
-    runner._ephemeral_system_prompt = ""
-    runner._reasoning_config = None
-    runner._provider_routing = {}
-    runner._fallback_model = None
-    runner._session_db = None
-    runner._running_agents = {}
-    runner._session_run_generation = {}
-    runner.hooks = SimpleNamespace(loaded_hooks=False)
-    runner.config = SimpleNamespace(
-        thread_sessions_per_user=False,
-        group_sessions_per_user=False,
-        stt_enabled=False,
-    )
-    return runner
-
-
 async def _run_once(monkeypatch, tmp_path, agent_cls, session_id):
     monkeypatch.setenv("HERMES_TOOL_PROGRESS_MODE", "all")
 
@@ -165,7 +110,7 @@ async def _run_once(monkeypatch, tmp_path, agent_cls, session_id):
     monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
 
     adapter = ProgressCaptureAdapter()
-    runner = _make_runner(adapter)
+    runner = make_progress_runner(adapter)
     gateway_run = importlib.import_module("gateway.run")
     monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
     monkeypatch.setattr(

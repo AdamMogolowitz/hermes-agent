@@ -61,7 +61,6 @@ from hermes_cli.fallback_config import get_fallback_chain
 from gateway.delegated_notifications import (
     delegated_start_enabled as _delegated_start_enabled,
     handle_subagent_start_event,
-    schedule_delegated_start_notice,
     should_emit_delegated_task_start as _should_emit_delegated_task_start,
 )
 from gateway.platform_utils import (
@@ -17002,6 +17001,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     event_message_id=event_message_id,
                     session_key=session_key,
                     run_generation=run_generation,
+                    live_agent_getter=(
+                        (lambda: agent_holder[0] if agent_holder else None)
+                    ),
                 )
                 return
 
@@ -17312,6 +17314,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # Delegated-start bubbles are delivered via
             # schedule_delegated_start_notice, not this sender.
             if type(adapter).edit_message is BasePlatformAdapter.edit_message:
+                while not progress_queue.empty():
+                    try:
+                        progress_queue.get_nowait()
+                    except Exception:
+                        break
                 return
 
             progress_lines = []      # Accumulated tool lines for the CURRENT editable bubble

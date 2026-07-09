@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from agent.async_utils import safe_schedule_threadsafe
@@ -84,6 +85,29 @@ def delegated_start_enabled(user_config: dict, platform_key: str) -> bool:
     return is_truthy_value(value, default=True)
 
 
+def _session_is_interrupted(
+    runner: Any,
+    *,
+    session_key: str | None,
+    live_agent_getter: Callable[[], Any] | None,
+) -> bool:
+    """True when the live in-turn agent or promoted slot is interrupted."""
+    if live_agent_getter is not None:
+        agent = live_agent_getter()
+        if agent is not None and getattr(agent, "is_interrupted", False):
+            return True
+    if session_key:
+        running = runner._running_agents.get(session_key)
+        if running is not None:
+            from gateway.run import _AGENT_PENDING_SENTINEL
+
+            if running is not _AGENT_PENDING_SENTINEL and getattr(
+                running, "is_interrupted", False
+            ):
+                return True
+    return False
+
+
 def handle_subagent_start_event(
     *,
     source: SessionSource,
@@ -94,6 +118,7 @@ def handle_subagent_start_event(
     event_message_id: str | None,
     session_key: str | None,
     run_generation: int | None,
+    live_agent_getter: Callable[[], Any] | None = None,
 ) -> None:
     """Gate, build, and schedule a delegated-subagent start bubble."""
     if not should_emit_delegated_task_start(source.platform):
@@ -122,6 +147,7 @@ def handle_subagent_start_event(
             reply_to=event_message_id,
             session_key=session_key,
             run_generation=run_generation,
+            live_agent_getter=live_agent_getter,
         )
     except Exception as exc:
         logger.debug("subagent.start relay failed: %s", exc)
@@ -134,6 +160,7 @@ def schedule_delegated_start_notice(
     reply_to: str | None = None,
     session_key: str | None = None,
     run_generation: int | None = None,
+    live_agent_getter: Callable[[], Any] | None = None,
 ) -> None:
     """Schedule a one-shot delegated-start bubble on the gateway loop.
 
@@ -160,6 +187,7 @@ def schedule_delegated_start_notice(
             reply_to=reply_to,
             session_key=session_key,
             run_generation=run_generation,
+            live_agent_getter=live_agent_getter,
         ),
         loop,
         logger=logger,
@@ -175,6 +203,7 @@ async def deliver_delegated_start_notice(
     reply_to: str | None = None,
     session_key: str | None = None,
     run_generation: int | None = None,
+    live_agent_getter: Callable[[], Any] | None = None,
 ) -> None:
     """Send a delegated-subagent start bubble outside the per-turn progress sender."""
     if not should_emit_delegated_task_start(source.platform):
@@ -197,15 +226,17 @@ async def deliver_delegated_start_notice(
             run_generation,
         )
         return
-    if session_key:
-        running = runner._running_agents.get(session_key)
-        if running is not None and getattr(running, "is_interrupted", False):
-            logger.debug(
-                "delegated start notice dropped: session interrupted "
-                "(session_key=%s)",
-                session_key,
-            )
-            return
+    if _session_is_interrupted(
+        runner,
+        session_key=session_key,
+        live_agent_getter=live_agent_getter,
+    ):
+        logger.debug(
+            "delegated start notice dropped: session interrupted "
+            "(session_key=%s)",
+            session_key,
+        )
+        return
     adapter = runner._adapter_for_source(source)
     if not adapter or not source.chat_id:
         return
